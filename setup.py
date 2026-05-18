@@ -12,18 +12,18 @@ ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 
 ENV_CONTENT = """\
 # --- Zoom: jward account ---
-ZOOM_JWARD_ACCOUNT_ID=ozXPySCRQnW92mKd_AShsg
-ZOOM_JWARD_CLIENT_ID=lcOk4NTD2zQxltnJ4Rkw
-ZOOM_JWARD_CLIENT_SECRET=GhiFiNrvM8HBGpEDdUwzCDyWmDn2ZoqM
+ZOOM_JWARD_ACCOUNT_ID=your_jward_account_id
+ZOOM_JWARD_CLIENT_ID=your_jward_client_id
+ZOOM_JWARD_CLIENT_SECRET=your_jward_client_secret
 
 # --- Zoom: navigators account ---
-ZOOM_NAVIGATORS_ACCOUNT_ID=UHZIXq4nQ3az3UUaGbVS_g
-ZOOM_NAVIGATORS_CLIENT_ID=V61bHTVQTN6obqgfsHKvKQ
-ZOOM_NAVIGATORS_CLIENT_SECRET=OXWnDCASnmctIEURI5aTWySl2LNvssm5
+ZOOM_NAVIGATORS_ACCOUNT_ID=your_navigators_account_id
+ZOOM_NAVIGATORS_CLIENT_ID=your_navigators_client_id
+ZOOM_NAVIGATORS_CLIENT_SECRET=your_navigators_client_secret
 
 # --- Zoom: webhook secrets ---
-ZOOM_JWARD_WEBHOOK_SECRET=zHYLVSxdQaicUKlrvmCSrA
-ZOOM_NAVIGATORS_WEBHOOK_SECRET=KirrzOpeQRygBPZIwBVomg
+ZOOM_JWARD_WEBHOOK_SECRET=your_jward_webhook_secret
+ZOOM_NAVIGATORS_WEBHOOK_SECRET=your_navigators_webhook_secret
 
 # --- YouTube ---
 YOUTUBE_PLAYLIST_NAME=Replays
