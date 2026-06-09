@@ -79,8 +79,8 @@ Use a consistent, descriptive topic string. The MEC event title must contain the
 same session name (e.g. Zoom topic `All Hands On Deck` → MEC title
 `Ganjier Guild – All Hands On Deck`).
 
-**Full standard:** see [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md) for required
-title format, description template, categories, and pre-flight checklists.
+**Full standard:** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md)  
+**Copy-paste per series:** [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)
 
 ---
 
@@ -224,7 +224,7 @@ MEC_MATCH_MIN_SCORE=40
 Matching uses the site timezone and checks the recording date ±1 day for recurring
 events like *All Hands On Deck*.
 
-**Operator standard (titles, descriptions, checklists):** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md)
+**Operator standard:** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md) · **Series copy-paste blocks:** [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)
 
 ---
 
