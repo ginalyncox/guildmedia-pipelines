@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ganjier Replay Pipeline
  * Description: Admin dashboard and REST API for the Zoom replay automation pipeline. Logs pipeline runs and proxies Zoom webhooks to pipeline.py.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Ganjier Guild
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'GG_PIPELINE_VERSION', '1.0.0' );
+define( 'GG_PIPELINE_VERSION', '1.1.0' );
 define( 'GG_PIPELINE_TABLE', 'gg_pipeline_runs' );
+
+require_once __DIR__ . '/includes/mec-integration.php';
 
 register_activation_hook( __FILE__, 'gg_pipeline_activate' );
 
@@ -35,6 +37,7 @@ function gg_pipeline_activate() {
 		zoom_account varchar(64) NOT NULL DEFAULT '',
 		youtube_url varchar(512) NOT NULL DEFAULT '',
 		wp_url varchar(512) NOT NULL DEFAULT '',
+		mec_event_url varchar(512) NOT NULL DEFAULT '',
 		status varchar(64) NOT NULL DEFAULT 'pending',
 		error text NULL,
 		processed_at datetime DEFAULT NULL,
@@ -119,6 +122,7 @@ function gg_pipeline_run_args() {
 		'zoom_account'   => [ 'type' => 'string', 'required' => false ],
 		'youtube_url'    => [ 'type' => 'string', 'required' => false ],
 		'wp_url'         => [ 'type' => 'string', 'required' => false ],
+		'mec_event_url'  => [ 'type' => 'string', 'required' => false ],
 		'status'         => [ 'type' => 'string', 'required' => true ],
 		'error'          => [ 'type' => 'string', 'required' => false ],
 		'processed_at'   => [ 'type' => 'string', 'required' => false ],
@@ -154,6 +158,7 @@ function gg_pipeline_upsert_run( WP_REST_Request $request ) {
 		'zoom_account'   => sanitize_text_field( (string) $request->get_param( 'zoom_account' ) ),
 		'youtube_url'    => esc_url_raw( (string) $request->get_param( 'youtube_url' ) ),
 		'wp_url'         => esc_url_raw( (string) $request->get_param( 'wp_url' ) ),
+		'mec_event_url'  => esc_url_raw( (string) $request->get_param( 'mec_event_url' ) ),
 		'status'         => sanitize_text_field( (string) $request->get_param( 'status' ) ),
 		'error'          => sanitize_textarea_field( (string) $request->get_param( 'error' ) ),
 		'processed_at'   => gg_pipeline_parse_datetime( $request->get_param( 'processed_at' ) ),
@@ -237,6 +242,7 @@ function gg_pipeline_format_run( $row ) {
 		'zoom_account'   => $row['zoom_account'] ?? '',
 		'youtube_url'    => $row['youtube_url'] ?? '',
 		'wp_url'         => $row['wp_url'] ?? '',
+		'mec_event_url'  => $row['mec_event_url'] ?? '',
 		'status'         => $row['status'] ?? '',
 		'error'          => $row['error'] ?? '',
 		'processed_at'   => $row['processed_at'] ?? '',
@@ -398,13 +404,14 @@ function gg_pipeline_render_dashboard() {
 					<th>Status</th>
 					<th>YouTube</th>
 					<th>Replay</th>
+					<th>MEC Event</th>
 					<th>Processed</th>
 					<th>Error</th>
 				</tr>
 			</thead>
 			<tbody>
 			<?php if ( empty( $rows ) ) : ?>
-				<tr><td colspan="8">No pipeline runs logged yet.</td></tr>
+				<tr><td colspan="9">No pipeline runs logged yet.</td></tr>
 			<?php else : ?>
 				<?php foreach ( $rows as $row ) : ?>
 					<tr>
@@ -422,6 +429,11 @@ function gg_pipeline_render_dashboard() {
 						<td>
 							<?php if ( ! empty( $row['wp_url'] ) ) : ?>
 								<a href="<?php echo esc_url( $row['wp_url'] ); ?>" target="_blank" rel="noopener noreferrer">Replay</a>
+							<?php endif; ?>
+						</td>
+						<td>
+							<?php if ( ! empty( $row['mec_event_url'] ) ) : ?>
+								<a href="<?php echo esc_url( $row['mec_event_url'] ); ?>" target="_blank" rel="noopener noreferrer">Calendar</a>
 							<?php endif; ?>
 						</td>
 						<td><?php echo esc_html( $row['processed_at'] ); ?></td>

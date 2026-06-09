@@ -50,6 +50,7 @@ DEFAULT_HEADERS = [
     "Error",
     "Processed At",
     "Recording ID",
+    "MEC Event URL",
 ]
 
 # Map logical field → acceptable header labels (lowercase).
@@ -64,6 +65,7 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "error": ("error", "error message", "notes", "failure", "failure reason"),
     "processed_at": ("processed at", "processed", "updated", "last updated", "timestamp"),
     "recording_id": ("recording id", "zoom recording id", "id", "meeting id"),
+    "mec_event_url": ("mec event url", "calendar event url", "mec url", "event url"),
 }
 
 _FIELD_TO_HEADER: dict[str, str] = {
@@ -77,6 +79,7 @@ _FIELD_TO_HEADER: dict[str, str] = {
     "error": "Error",
     "processed_at": "Processed At",
     "recording_id": "Recording ID",
+    "mec_event_url": "MEC Event URL",
 }
 
 
@@ -299,6 +302,7 @@ def log_to_wordpress(record: dict[str, Any]) -> None:
         "status": record.get("status", ""),
         "error": record.get("error", ""),
         "processed_at": record.get("processed_at", ""),
+        "mec_event_url": record.get("mec_event_url", ""),
     }
 
     response = requests.post(
@@ -358,6 +362,7 @@ def _build_record(
     wp_url: str | None = None,
     error: str | None = None,
     recording_id: str | None = None,
+    mec_event_url: str | None = None,
 ) -> dict[str, Any]:
     return {
         "topic": topic,
@@ -370,6 +375,7 @@ def _build_record(
         "error": error or "",
         "processed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "recording_id": recording_id or "",
+        "mec_event_url": mec_event_url or "",
     }
 
 
@@ -384,6 +390,7 @@ def log_pipeline_result(
     wp_url: str | None = None,
     error: str | None = None,
     recording_id: str | None = None,
+    mec_event_url: str | None = None,
 ) -> None:
     """Best-effort tracker update; never raises to the caller."""
     if not is_configured():
@@ -399,6 +406,7 @@ def log_pipeline_result(
         wp_url=wp_url,
         error=error,
         recording_id=recording_id,
+        mec_event_url=mec_event_url,
     )
     backend = tracker_backend()
 

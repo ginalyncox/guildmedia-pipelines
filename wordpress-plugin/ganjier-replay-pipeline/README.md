@@ -5,6 +5,7 @@ Upload this plugin to WordPress to get:
 - **Admin dashboard** — Tools → Replay Pipeline (status table for every automation run)
 - **REST API** — `POST /wp-json/gg/v1/pipeline-runs` (used by the Python pipeline)
 - **Zoom webhook bridge** — `POST /wp-json/gg/v1/zoom-webhook` (replaces `zoom-webhook-bridge.php`)
+- **MEC calendar linking** — matches Zoom recordings to `mec-events` and shows a replay notice on the event page
 
 ## Install
 
@@ -18,6 +19,17 @@ Upload this plugin to WordPress to get:
 After activation, open **Tools → Replay Pipeline** in wp-admin.
 
 The table shows topic, recording date, Zoom account, status, YouTube link, replay post link, processed time, and errors.
+
+## MEC calendar integration
+
+After a replay is published, the pipeline calls:
+
+```
+GET  /wp-json/gg/v1/mec-events/match?topic=...&start=2026-06-06T16:00:00+00:00
+POST /wp-json/gg/v1/mec-events/{id}/link-replay
+```
+
+Linked events display a **Replay available** box on the public event page.
 
 ## API
 

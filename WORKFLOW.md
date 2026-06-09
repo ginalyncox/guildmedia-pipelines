@@ -16,6 +16,7 @@ Zoom recording ends
   → upload to YouTube (unlisted, added to Replays playlist)
   → fetch Canva thumbnail (optional)
   → create WordPress replay post on ganjierguild.com
+  → match + link the MEC calendar event (when a scheduled event matches)
   → log run to WordPress dashboard (Tools → Replay Pipeline)
   → clean up temp files
 ```
@@ -195,6 +196,27 @@ python3 replay_intro.py prepend trimmed.mp4 --title "Meeting Topic" -o /tmp/with
 When Canva is not configured, auth fails, or no design matches, the pipeline
 uses the **YouTube auto-generated thumbnail** for the WordPress featured image.
 The replay post is still created.
+
+---
+
+## MEC calendar event linking
+
+Scheduled sessions on ganjierguild.com use **Modern Events Calendar** (`mec-events`).
+After each replay is published, the pipeline:
+
+1. Finds the MEC event on the recording date whose title matches the Zoom topic
+2. Stores replay + YouTube links on that event
+3. Shows a **Replay available** notice on the MEC event page
+
+Requires the updated **Ganjier Replay Pipeline** plugin (v1.1+).
+
+```env
+MEC_LINK_ENABLED=true
+MEC_MATCH_MIN_SCORE=40
+```
+
+Matching uses the site timezone and checks the recording date ±1 day for recurring
+events like *All Hands On Deck*.
 
 ---
 
