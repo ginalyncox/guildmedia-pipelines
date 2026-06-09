@@ -29,6 +29,7 @@ import os
 import random
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from google.auth.transport.requests import Request
@@ -90,6 +91,10 @@ def get_authenticated_service(
     runs the local-server OAuth2 flow using *secrets_path* and persists the
     resulting token for future runs.
     """
+    from oauth_files import ensure_youtube_oauth_files
+
+    ensure_youtube_oauth_files(Path(token_path), Path(secrets_path))
+
     creds: Optional[Credentials] = None
 
     if os.path.exists(token_path):

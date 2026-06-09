@@ -391,6 +391,10 @@ def get_authenticated_client(token_path: str = CANVA_TOKEN_PATH) -> str:
     """
     global _cached_access_token
 
+    from oauth_files import ensure_canva_token_file
+
+    ensure_canva_token_file(Path(token_path))
+
     # Fast path: already authenticated this process
     if _cached_access_token:
         return _cached_access_token
