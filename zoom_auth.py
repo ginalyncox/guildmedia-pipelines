@@ -85,7 +85,17 @@ class ZoomAuth:
         self._expires_at = 0.0
 
 
-def configured_accounts() -> list[ZoomAuth]:
+def verify_auth(auth: ZoomAuth) -> bool:
+    """Return True when the account can obtain a Zoom access token."""
+    try:
+        auth.get_token()
+        return True
+    except Exception:
+        auth.invalidate()
+        return False
+
+
+def configured_accounts(*, only_working: bool = False) -> list[ZoomAuth]:
     """Return ZoomAuth instances for every account with complete credentials."""
     accounts = [
         ZoomAuth(
@@ -101,11 +111,14 @@ def configured_accounts() -> list[ZoomAuth]:
             client_secret=os.getenv("ZOOM_NAVIGATORS_CLIENT_SECRET", ""),
         ),
     ]
-    return [
+    auths = [
         auth
         for auth in accounts
         if auth.account_id and auth.client_id and auth.client_secret
     ]
+    if only_working:
+        auths = [auth for auth in auths if verify_auth(auth)]
+    return auths
 
 
 def auth_for_account_id(account_id: str) -> ZoomAuth | None:

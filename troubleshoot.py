@@ -72,11 +72,11 @@ print("  Ganjier Guild Replay Pipeline -- Diagnostic")
 print("=" * 60)
 
 # --- 1. Python version ---
-print(f"\n[1/6] Python...")
+print(f"\n[1/7] Python...")
 ok(f"Python {sys.version.split()[0]}  (executable: {sys.executable})")
 
 # --- 2. .env file ---
-print(f"\n[2/6] .env file...")
+print(f"\n[2/7] .env file...")
 env_path = os.path.join(SCRIPT_DIR, ".env")
 if not os.path.exists(env_path):
     fail(f".env not found at {env_path}  →  run: python setup.py")
@@ -103,7 +103,7 @@ else:
             ok(key)
 
 # --- 3. Python packages ---
-print(f"\n[3/6] Python packages...")
+print(f"\n[3/7] Python packages...")
 for pkg in REQUIRED_PACKAGES:
     mod = pkg.split(".")[0]
     try:
@@ -122,7 +122,7 @@ except Exception:
     errors += 1
 
 # --- 4. Auth token files ---
-print(f"\n[4/6] Auth token files...")
+print(f"\n[4/7] Auth token files...")
 files = {
     "token.json":         "py upload_youtube.py --test-auth",
     "canva_token.json":   "py canva_thumbnail.py --auth",
@@ -132,8 +132,21 @@ for fname, fix in files.items():
     path = os.path.join(SCRIPT_DIR, fname)
     check(fname, os.path.exists(path), fix)
 
-# --- 5. Service connectivity ---
-print(f"\n[5/6] Service connectivity...")
+# --- 5. Zoom OAuth per account ---
+print(f"\n[5/7] Zoom OAuth...")
+try:
+    from zoom_auth import configured_accounts, verify_auth
+    for auth in configured_accounts():
+        if verify_auth(auth):
+            ok(f"Zoom OAuth [{auth.name}]")
+        else:
+            fail(f"Zoom OAuth [{auth.name}]  →  check ZOOM_{auth.name.upper()}_* in .env")
+            errors += 1
+except ImportError as exc:
+    warn(f"zoom_auth import failed ({exc})")
+
+# --- 6. Service connectivity ---
+print(f"\n[6/7] Service connectivity...")
 try:
     import requests
     for name, url in SERVICES:
@@ -145,8 +158,8 @@ try:
 except ImportError:
     warn("requests not installed — skipping connectivity checks")
 
-# --- 6. Script syntax ---
-print(f"\n[6/6] Script syntax check...")
+# --- 7. Script syntax ---
+print(f"\n[7/7] Script syntax check...")
 for script in SCRIPTS:
     path = os.path.join(SCRIPT_DIR, script)
     if not os.path.exists(path):
