@@ -9,6 +9,8 @@ Usage:
     python backfill.py --dry-run        # preview recordings without processing
     python backfill.py --reset-state    # clear state file and start fresh
     python backfill.py --retry-failed   # only retry previously failed recordings
+    python backfill.py --yesterday      # only yesterday's recordings (CT timezone)
+    python backfill.py --from-date 2026-06-08 --to-date 2026-06-08
 """
 
 import argparse
@@ -17,9 +19,10 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -35,6 +38,7 @@ load_dotenv(SCRIPT_DIR / ".env")
 BACKFILL_FROM_DATE   = os.getenv("BACKFILL_FROM_DATE", "2020-01-01")
 BACKFILL_DELAY_SEC   = float(os.getenv("BACKFILL_DELAY_SECONDS", "5"))
 BACKFILL_TOPIC_FILTER = os.getenv("BACKFILL_TOPIC_FILTER", "").strip().lower()
+BACKFILL_TIMEZONE    = os.getenv("BACKFILL_TIMEZONE", "America/Chicago")
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -91,6 +95,27 @@ def save_state(state: dict) -> None:
     tmp_path.replace(STATE_FILE)
 
 
+def resolve_date_range(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    yesterday_only: bool = False,
+) -> tuple[str, str]:
+    """
+    Resolve the Zoom List Recordings date window.
+
+    Defaults to BACKFILL_FROM_DATE through today (UTC). CLI flags override .env.
+    --yesterday uses BACKFILL_TIMEZONE (default America/Chicago).
+    """
+    if yesterday_only:
+        tz = ZoneInfo(BACKFILL_TIMEZONE)
+        day = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+        return day, day
+
+    resolved_from = (from_date or BACKFILL_FROM_DATE).strip()
+    resolved_to = (to_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")).strip()
+    return resolved_from, resolved_to
+
+
 def reset_state() -> None:
     """Delete the state file so the next run starts completely fresh."""
     if STATE_FILE.exists():
@@ -104,24 +129,28 @@ def reset_state() -> None:
 # Fetch all recordings
 # ---------------------------------------------------------------------------
 
-def fetch_all_recordings(auth: ZoomAuth) -> list[dict]:
+def fetch_all_recordings(
+    auth: ZoomAuth,
+    from_date: str,
+    to_date: str,
+) -> list[dict]:
     """
     Retrieve all Zoom cloud recordings for the given account.
 
     Paginates through all pages using next_page_token.
-    Applies BACKFILL_FROM_DATE (from .env) as the start date and today as
-    the end date.
 
     Parameters
     ----------
     auth : ZoomAuth
         ZoomAuth instance for the account to fetch recordings from.
+    from_date : str
+        Start date (YYYY-MM-DD) for the Zoom List Recordings query.
+    to_date : str
+        End date (YYYY-MM-DD) for the Zoom List Recordings query.
 
     Returns a list of meeting objects (from the Zoom List Recordings response).
     Each object contains: uuid, topic, start_time, duration, recording_files, etc.
     """
-    from_date = BACKFILL_FROM_DATE
-    to_date   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     page_size  = 300  # Zoom's max
 
     logger.info("[%s] Fetching recordings from %s to %s …", auth.name, from_date, to_date)
@@ -235,7 +264,14 @@ def build_pipeline_payload(recording: dict, account_id: str) -> dict:
 # Main backfill logic
 # ---------------------------------------------------------------------------
 
-def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filter: str | None = None) -> None:
+def run_backfill(
+    dry_run: bool = False,
+    retry_failed: bool = False,
+    account_filter: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    yesterday_only: bool = False,
+) -> None:
     """
     Core backfill loop. Iterates over all configured Zoom accounts (or a single
     account if account_filter is provided).
@@ -248,8 +284,16 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
         If True, only process recordings previously marked as failed.
     account_filter : str or None
         If provided, only run the account with this name. Default runs all accounts.
+    from_date : str or None
+        Optional override for BACKFILL_FROM_DATE (YYYY-MM-DD).
+    to_date : str or None
+        Optional override for the end date (YYYY-MM-DD). Defaults to today (UTC).
+    yesterday_only : bool
+        If True, only fetch recordings from yesterday in BACKFILL_TIMEZONE.
     """
     start_time = time.monotonic()
+    range_from, range_to = resolve_date_range(from_date, to_date, yesterday_only)
+    logger.info("Backfill date range: %s to %s", range_from, range_to)
 
     # Determine which accounts to run (preserves per-account ACCESS_TOKEN fallbacks)
     accounts_to_run = configured_accounts()
@@ -296,7 +340,7 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
 
         # Fetch + filter for this account
         try:
-            raw_meetings = fetch_all_recordings(auth)
+            raw_meetings = fetch_all_recordings(auth, range_from, range_to)
         except Exception as exc:  # noqa: BLE001
             logger.error("[%s] Could not list recordings — skipping: %s", auth.name, exc)
             continue
@@ -464,13 +508,43 @@ def main() -> None:
         default=None,
         help="Only run the named account (e.g. jward or navigators). Default runs all accounts.",
     )
+    parser.add_argument(
+        "--from-date",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="Only fetch recordings on or after this date (overrides BACKFILL_FROM_DATE).",
+    )
+    parser.add_argument(
+        "--to-date",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="Only fetch recordings on or before this date (default: today UTC).",
+    )
+    parser.add_argument(
+        "--yesterday",
+        action="store_true",
+        help=(
+            "Only fetch yesterday's recordings "
+            f"(timezone: {BACKFILL_TIMEZONE}). Shorthand for a one-day test backfill."
+        ),
+    )
     args = parser.parse_args()
 
     if args.reset_state:
         reset_state()
         sys.exit(0)
 
-    run_backfill(dry_run=args.dry_run, retry_failed=args.retry_failed, account_filter=args.account)
+    if args.yesterday and (args.from_date or args.to_date):
+        parser.error("--yesterday cannot be combined with --from-date or --to-date")
+
+    run_backfill(
+        dry_run=args.dry_run,
+        retry_failed=args.retry_failed,
+        account_filter=args.account,
+        from_date=args.from_date,
+        to_date=args.to_date,
+        yesterday_only=args.yesterday,
+    )
 
 
 if __name__ == "__main__":
