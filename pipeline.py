@@ -202,7 +202,12 @@ def run_trim(input_path: str, output_path: str) -> str:
 # Step 2b – Intro
 # ---------------------------------------------------------------------------
 
-def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
+def run_intro(
+    trimmed_path: str,
+    meeting_title: str,
+    output_path: str,
+    meeting_date: datetime | None = None,
+) -> str:
     """
     Optionally prepend a branded YouTube intro to the trimmed replay.
 
@@ -224,6 +229,7 @@ def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
         trimmed_path=trimmed_path,
         meeting_title=meeting_title,
         output_path=output_path,
+        meeting_date=meeting_date,
     )
     upload_path = str(result_path)
 
