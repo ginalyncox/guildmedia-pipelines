@@ -568,7 +568,7 @@ def run_pipeline(payload: dict) -> None:
     logger.info("[2b/7] Preparing intro …")
     t0 = time.monotonic()
     try:
-        final_upload_path = run_intro(trimmed_path, topic, upload_path)
+        final_upload_path = run_intro(trimmed_path, topic, upload_path, start_dt)
     except Exception as exc:
         logger.error("[2b/7] Intro step failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "intro", exc)
