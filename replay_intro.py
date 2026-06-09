@@ -1,22 +1,26 @@
 """
 replay_intro.py — Build and prepend a branded YouTube intro for replay videos.
 
-The default intro is generated with ffmpeg (no external design files required).
-You can replace it later with a custom MP4 from Canva or a video editor by setting
-REPLAY_INTRO_PATH in .env.
+Modes (REPLAY_INTRO_MODE):
+  ffmpeg — default text slate (no API keys)
+  ai     — OpenAI image + voiceover intro (OPENAI_API_KEY)
+  static — use REPLAY_INTRO_PATH MP4 only
 
 Usage:
-    python replay_intro.py --build --title "Guild Monthly Webinar"
-    python replay_intro.py --prepend trimmed.mp4 --title "Guild Monthly Webinar" -o final.mp4
+    python replay_intro.py build --title "Guild Monthly Webinar"
+    python replay_intro.py build --title "All Hands On Deck" --ai
+    python replay_intro.py prepend trimmed.mp4 --title "Guild Monthly Webinar" -o final.mp4
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,12 +31,15 @@ DEFAULT_INTRO_PATH = ASSETS_DIR / "replay_intro_template.mp4"
 
 load_dotenv(SCRIPT_DIR / ".env")
 
+logger = logging.getLogger("replay_intro")
+
 REPLAY_INTRO_ENABLED = os.getenv("REPLAY_INTRO_ENABLED", "false").strip().lower() in {
     "1",
     "true",
     "yes",
     "on",
 }
+REPLAY_INTRO_MODE = os.getenv("REPLAY_INTRO_MODE", "ffmpeg").strip().lower()
 REPLAY_INTRO_PATH = os.getenv("REPLAY_INTRO_PATH", "").strip()
 REPLAY_INTRO_DURATION = float(os.getenv("REPLAY_INTRO_DURATION", "5"))
 REPLAY_INTRO_DYNAMIC_TITLE = os.getenv("REPLAY_INTRO_DYNAMIC_TITLE", "true").strip().lower() in {
@@ -96,6 +103,17 @@ def intro_enabled() -> bool:
     return REPLAY_INTRO_ENABLED
 
 
+def intro_mode() -> str:
+    """Return intro builder mode: ffmpeg, ai, or static."""
+    if REPLAY_INTRO_MODE in {"ffmpeg", "ai", "static"}:
+        return REPLAY_INTRO_MODE
+    return "ffmpeg"
+
+
+def use_ai_intro() -> bool:
+    return intro_mode() == "ai"
+
+
 def resolve_static_intro_path() -> Path | None:
     if REPLAY_INTRO_PATH:
         path = Path(REPLAY_INTRO_PATH)
@@ -110,23 +128,34 @@ def resolve_static_intro_path() -> Path | None:
 def build_intro(
     output_path: str | Path,
     meeting_title: str | None = None,
+    meeting_date: datetime | None = None,
     duration: float | None = None,
     width: int | None = None,
     height: int | None = None,
     fps: int | None = None,
+    force_ai: bool = False,
 ) -> Path:
     """
-    Generate a branded intro MP4 with ffmpeg.
+    Generate a branded intro MP4.
 
-    Parameters
-    ----------
-    output_path : str or Path
-        Destination MP4 path.
-    meeting_title : str, optional
-        Meeting topic shown on the intro. When omitted, only brand lines are shown.
-    duration : float, optional
-        Intro length in seconds (default from REPLAY_INTRO_DURATION).
+    Uses AI (image + voiceover) when REPLAY_INTRO_MODE=ai or force_ai=True.
+    Falls back to the ffmpeg text slate if AI generation fails.
     """
+    if force_ai or use_ai_intro():
+        try:
+            from ai_intro import ai_intro_available, build_ai_intro  # type: ignore
+
+            if ai_intro_available():
+                return build_ai_intro(
+                    output_path,
+                    meeting_title or "",
+                    meeting_date=meeting_date,
+                    work_dir=Path(output_path).parent,
+                )
+            logger.warning("REPLAY_INTRO_MODE=ai but OPENAI_API_KEY missing — using ffmpeg slate.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AI intro generation failed — falling back to ffmpeg slate: %s", exc)
+
     _require_ffmpeg()
 
     output = Path(output_path)
@@ -197,6 +226,7 @@ def prepend_intro(
     output_path: str | Path,
     intro_path: str | Path | None = None,
     meeting_title: str | None = None,
+    meeting_date: datetime | None = None,
 ) -> Path:
     """
     Prepend an intro clip to a trimmed replay and write a YouTube-ready MP4.
@@ -217,9 +247,14 @@ def prepend_intro(
     generated_intro: Path | None = None
     intro = Path(intro_path) if intro_path else resolve_static_intro_path()
 
-    if intro is None or (meeting_title and REPLAY_INTRO_DYNAMIC_TITLE):
+    dynamic = meeting_title and REPLAY_INTRO_DYNAMIC_TITLE and intro_mode() != "static"
+    if intro is None or dynamic:
         generated_intro = output.parent / f".intro_{body.stem}.mp4"
-        intro = build_intro(generated_intro, meeting_title=meeting_title)
+        intro = build_intro(
+            generated_intro,
+            meeting_title=meeting_title,
+            meeting_date=meeting_date,
+        )
     elif not intro.is_file():
         raise FileNotFoundError(f"Intro video not found: {intro}")
 
@@ -281,6 +316,7 @@ def prepare_upload_video(
     trimmed_path: str | Path,
     meeting_title: str,
     output_path: str | Path | None = None,
+    meeting_date: datetime | None = None,
 ) -> Path:
     """
     Return the video path that should be uploaded to YouTube.
@@ -294,7 +330,12 @@ def prepare_upload_video(
 
     if output_path is None:
         output_path = trimmed.with_name(f"{trimmed.stem}_with_intro{trimmed.suffix}")
-    return prepend_intro(trimmed, output_path, meeting_title=meeting_title)
+    return prepend_intro(
+        trimmed,
+        output_path,
+        meeting_title=meeting_title,
+        meeting_date=meeting_date,
+    )
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
@@ -302,6 +343,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         args.output,
         meeting_title=args.title,
         duration=args.duration,
+        force_ai=args.ai,
     )
     print(f"Intro written to: {path}")
     return 0
@@ -330,6 +372,11 @@ def main() -> None:
         help="Output MP4 path",
     )
     build_parser.add_argument("--duration", type=float, default=None)
+    build_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Force AI-generated intro (image + voiceover) for this build",
+    )
     build_parser.set_defaults(func=_cmd_build)
 
     prepend_parser = sub.add_parser("prepend", help="Prepend intro to a trimmed replay")

@@ -95,6 +95,49 @@ def save_state(state: dict) -> None:
     tmp_path.replace(STATE_FILE)
 
 
+def local_yesterday_window() -> tuple[datetime, datetime]:
+    """
+    Return [start, end) UTC datetimes for yesterday in BACKFILL_TIMEZONE.
+
+    Used to post-filter Zoom results because the List Recordings API treats
+    ``from``/``to`` as UTC calendar dates, not local days.
+    """
+    tz = ZoneInfo(BACKFILL_TIMEZONE)
+    now_local = datetime.now(tz)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start_local = today_start_local - timedelta(days=1)
+    return (
+        yesterday_start_local.astimezone(timezone.utc),
+        today_start_local.astimezone(timezone.utc),
+    )
+
+
+def zoom_date_strings_for_utc_window(
+    window_start: datetime,
+    window_end: datetime,
+) -> tuple[str, str]:
+    """Map a UTC half-open window to Zoom List Recordings from/to date strings."""
+    inclusive_end = window_end - timedelta(microseconds=1)
+    return (
+        window_start.strftime("%Y-%m-%d"),
+        inclusive_end.strftime("%Y-%m-%d"),
+    )
+
+
+def recording_start_in_window(
+    start_time: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> bool:
+    """True when a Zoom recording start_time falls in [window_start, window_end)."""
+    if not start_time:
+        return False
+    started = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return window_start <= started < window_end
+
+
 def resolve_date_range(
     from_date: str | None = None,
     to_date: str | None = None,
@@ -104,12 +147,12 @@ def resolve_date_range(
     Resolve the Zoom List Recordings date window.
 
     Defaults to BACKFILL_FROM_DATE through today (UTC). CLI flags override .env.
-    --yesterday uses BACKFILL_TIMEZONE (default America/Chicago).
+    --yesterday uses BACKFILL_TIMEZONE (default America/Chicago) and expands the
+    Zoom query to every UTC calendar day that overlaps that local day.
     """
     if yesterday_only:
-        tz = ZoneInfo(BACKFILL_TIMEZONE)
-        day = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-        return day, day
+        window_start, window_end = local_yesterday_window()
+        return zoom_date_strings_for_utc_window(window_start, window_end)
 
     resolved_from = (from_date or BACKFILL_FROM_DATE).strip()
     resolved_to = (to_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")).strip()
@@ -345,6 +388,21 @@ def run_backfill(
             logger.error("[%s] Could not list recordings — skipping: %s", auth.name, exc)
             continue
         recordings   = filter_recordings(raw_meetings)
+        if yesterday_only:
+            window_start, window_end = local_yesterday_window()
+            before = len(recordings)
+            recordings = [
+                rec
+                for rec in recordings
+                if recording_start_in_window(rec["start_time"], window_start, window_end)
+            ]
+            logger.info(
+                "[%s] Local yesterday filter (%s): %d → %d recording(s)",
+                auth.name,
+                BACKFILL_TIMEZONE,
+                before,
+                len(recordings),
+            )
         total_found  = len(recordings)
         total_found_all += total_found
 

@@ -202,7 +202,12 @@ def run_trim(input_path: str, output_path: str) -> str:
 # Step 2b – Intro
 # ---------------------------------------------------------------------------
 
-def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
+def run_intro(
+    trimmed_path: str,
+    meeting_title: str,
+    output_path: str,
+    meeting_date: datetime | None = None,
+) -> str:
     """
     Optionally prepend a branded YouTube intro to the trimmed replay.
 
@@ -224,6 +229,7 @@ def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
         trimmed_path=trimmed_path,
         meeting_title=meeting_title,
         output_path=output_path,
+        meeting_date=meeting_date,
     )
     upload_path = str(result_path)
 
@@ -562,7 +568,7 @@ def run_pipeline(payload: dict) -> None:
     logger.info("[2b/7] Preparing intro …")
     t0 = time.monotonic()
     try:
-        final_upload_path = run_intro(trimmed_path, topic, upload_path)
+        final_upload_path = run_intro(trimmed_path, topic, upload_path, start_dt)
     except Exception as exc:
         logger.error("[2b/7] Intro step failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "intro", exc)
