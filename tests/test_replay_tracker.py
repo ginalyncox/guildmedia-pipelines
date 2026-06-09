@@ -8,6 +8,7 @@ from pathlib import Path
 
 from replay_tracker import (
     DEFAULT_HEADERS,
+    _cmd_headers,
     resolve_column_map,
     spreadsheet_id_from_gsheet_file,
     tracker_backend,
@@ -62,6 +63,15 @@ class ReplayTrackerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(spreadsheet_id_from_gsheet_file(shortcut), "abc123XYZ")
+
+    def test_headers_cli_uses_defaults_without_sheets(self):
+        with unittest.mock.patch("replay_tracker.sheets_is_configured", return_value=False):
+            with unittest.mock.patch("replay_tracker.read_headers") as read_headers:
+                with unittest.mock.patch("builtins.print") as print_mock:
+                    self.assertEqual(_cmd_headers(), 0)
+
+        read_headers.assert_not_called()
+        print_mock.assert_any_call("Topic")
 
 
 if __name__ == "__main__":

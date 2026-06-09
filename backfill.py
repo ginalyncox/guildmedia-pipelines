@@ -19,7 +19,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -95,6 +95,35 @@ def save_state(state: dict) -> None:
     tmp_path.replace(STATE_FILE)
 
 
+def _local_start_time_window(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    yesterday_only: bool = False,
+) -> tuple[datetime, datetime] | None:
+    """Return a local start-time window for single-day backfills."""
+    if yesterday_only:
+        tz = ZoneInfo(BACKFILL_TIMEZONE)
+        start = (datetime.now(tz) - timedelta(days=1)).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        return start, start + timedelta(days=1)
+
+    if not from_date or not to_date or from_date.strip() != to_date.strip():
+        return None
+
+    try:
+        day = date.fromisoformat(from_date.strip())
+    except ValueError:
+        return None
+
+    tz = ZoneInfo(BACKFILL_TIMEZONE)
+    start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    return start, start + timedelta(days=1)
+
+
 def resolve_date_range(
     from_date: str | None = None,
     to_date: str | None = None,
@@ -104,16 +133,32 @@ def resolve_date_range(
     Resolve the Zoom List Recordings date window.
 
     Defaults to BACKFILL_FROM_DATE through today (UTC). CLI flags override .env.
-    --yesterday uses BACKFILL_TIMEZONE (default America/Chicago).
+    Single-day local windows are expanded to the UTC dates Zoom expects.
     """
-    if yesterday_only:
-        tz = ZoneInfo(BACKFILL_TIMEZONE)
-        day = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-        return day, day
+    local_window = _local_start_time_window(from_date, to_date, yesterday_only)
+    if local_window:
+        start, end = local_window
+        return (
+            start.astimezone(timezone.utc).date().isoformat(),
+            end.astimezone(timezone.utc).date().isoformat(),
+        )
 
     resolved_from = (from_date or BACKFILL_FROM_DATE).strip()
     resolved_to = (to_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")).strip()
     return resolved_from, resolved_to
+
+
+def _parse_zoom_datetime(value: str) -> datetime | None:
+    """Parse Zoom ISO timestamps, treating naive values as UTC."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def reset_state() -> None:
@@ -187,10 +232,14 @@ def fetch_all_recordings(
 # Filter and normalise recordings
 # ---------------------------------------------------------------------------
 
-def filter_recordings(meetings: list[dict]) -> list[dict]:
+def filter_recordings(
+    meetings: list[dict],
+    start_time_window: tuple[datetime, datetime] | None = None,
+) -> list[dict]:
     """
     Filter meetings to only those with at least one completed MP4 recording file.
-    Applies optional BACKFILL_TOPIC_FILTER (case-insensitive substring match).
+    Applies optional BACKFILL_TOPIC_FILTER (case-insensitive substring match)
+    and optional local start-time bounds.
 
     Returns a list of dicts, one per qualifying meeting, each with the best/first
     completed MP4 recording file identified.
@@ -199,6 +248,13 @@ def filter_recordings(meetings: list[dict]) -> list[dict]:
 
     for meeting in meetings:
         topic = meeting.get("topic", "")
+
+        if start_time_window:
+            start_time = _parse_zoom_datetime(meeting.get("start_time", ""))
+            if start_time is None or not (
+                start_time_window[0] <= start_time < start_time_window[1]
+            ):
+                continue
 
         # Topic filter (optional)
         if BACKFILL_TOPIC_FILTER and BACKFILL_TOPIC_FILTER not in topic.lower():
@@ -293,6 +349,7 @@ def run_backfill(
     """
     start_time = time.monotonic()
     range_from, range_to = resolve_date_range(from_date, to_date, yesterday_only)
+    start_time_window = _local_start_time_window(from_date, to_date, yesterday_only)
     logger.info("Backfill date range: %s to %s", range_from, range_to)
 
     # Determine which accounts to run (preserves per-account ACCESS_TOKEN fallbacks)
@@ -344,7 +401,7 @@ def run_backfill(
         except Exception as exc:  # noqa: BLE001
             logger.error("[%s] Could not list recordings — skipping: %s", auth.name, exc)
             continue
-        recordings   = filter_recordings(raw_meetings)
+        recordings   = filter_recordings(raw_meetings, start_time_window)
         total_found  = len(recordings)
         total_found_all += total_found
 

@@ -494,7 +494,7 @@ def _cmd_test() -> int:
 
 
 def _cmd_headers() -> int:
-    for header in read_headers() if is_configured() else DEFAULT_HEADERS:
+    for header in read_headers() if sheets_is_configured() else DEFAULT_HEADERS:
         print(header)
     return 0
 
