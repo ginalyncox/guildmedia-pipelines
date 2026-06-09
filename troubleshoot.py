@@ -123,14 +123,30 @@ except Exception:
 
 # --- 4. Auth token files ---
 print(f"\n[4/7] Auth token files...")
+try:
+    from oauth_files import canva_token_ready, ensure_canva_token_file, ensure_youtube_oauth_files, youtube_files_ready
+    ensure_youtube_oauth_files()
+    ensure_canva_token_file()
+except ImportError:
+    youtube_files_ready = lambda: False  # type: ignore
+    canva_token_ready = lambda: False  # type: ignore
+
 files = {
-    "token.json":         "py upload_youtube.py --test-auth",
-    "canva_token.json":   "py canva_thumbnail.py --auth",
-    "client_secrets.json":"download from Google Cloud Console",
+    "token.json": (
+        youtube_files_ready(),
+        "python upload_youtube.py --test-auth  (or set YOUTUBE_TOKEN_JSON in .env)",
+    ),
+    "canva_token.json": (
+        canva_token_ready(),
+        "python canva_thumbnail.py --auth  (or set CANVA_TOKEN_JSON in .env)",
+    ),
+    "client_secrets.json": (
+        os.path.exists(os.path.join(SCRIPT_DIR, "client_secrets.json")),
+        "download from Google Cloud Console  (or set GOOGLE_CLIENT_SECRETS_JSON in .env)",
+    ),
 }
-for fname, fix in files.items():
-    path = os.path.join(SCRIPT_DIR, fname)
-    check(fname, os.path.exists(path), fix)
+for fname, (present, fix) in files.items():
+    check(fname, present, fix)
 
 # --- 5. Zoom OAuth per account ---
 print(f"\n[5/7] Zoom OAuth...")
