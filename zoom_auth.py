@@ -16,6 +16,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ACCOUNT_ENV_PREFIXES = {
+    "jward": "ZOOM_JWARD",
+    "navigators": "ZOOM_NAVIGATORS",
+}
+
+
+class ZoomAuthError(Exception):
+    """Raised when Zoom authentication fails."""
+
+    def __init__(self, account_name: str, message: str) -> None:
+        self.account_name = account_name
+        super().__init__(f"[{account_name}] {message}")
+
 
 class ZoomAuth:
     """Manages a Zoom Server-to-Server OAuth token for a single account."""
@@ -39,40 +52,53 @@ class ZoomAuth:
 
     def _fetch_token(self) -> tuple[str, float]:
         if not all([self.account_id, self.client_id, self.client_secret]):
-            raise RuntimeError(
-                f"[{self.name}] account_id, client_id, and client_secret must all be set in .env"
+            raise ZoomAuthError(
+                self.name,
+                "account_id, client_id, and client_secret must all be set in .env",
             )
 
         credentials = base64.b64encode(
             f"{self.client_id}:{self.client_secret}".encode("utf-8")
         ).decode("utf-8")
 
-        url = (
-            "https://zoom.us/oauth/token"
-            f"?grant_type=account_credentials&account_id={self.account_id}"
-        )
         resp = requests.post(
-            url,
+            "https://zoom.us/oauth/token",
             headers={
                 "Authorization": f"Basic {credentials}",
                 "Content-Type": "application/x-www-form-urlencoded",
+                "Host": "zoom.us",
+            },
+            data={
+                "grant_type": "account_credentials",
+                "account_id": self.account_id,
             },
             timeout=30,
         )
-        resp.raise_for_status()
-        data = resp.json()
 
+        if not resp.ok:
+            detail = resp.text[:300]
+            try:
+                payload = resp.json()
+                reason = payload.get("reason") or payload.get("error") or detail
+            except ValueError:
+                reason = detail
+            raise ZoomAuthError(
+                self.name,
+                f"OAuth token request failed (HTTP {resp.status_code}): {reason}",
+            )
+
+        data = resp.json()
         access_token = data.get("access_token")
         expires_in = int(data.get("expires_in", 3600))
         if not access_token:
-            raise RuntimeError(f"[{self.name}] Token response missing access_token: {data}")
+            raise ZoomAuthError(self.name, f"Token response missing access_token: {data}")
 
         return access_token, time.monotonic() + expires_in - 60
 
     def get_token(self) -> str:
         if self._static_token:
             if self._access_token is None:
-                raise RuntimeError(f"[{self.name}] static access token is not set")
+                raise ZoomAuthError(self.name, "static access token is not set")
             return self._access_token
         if self._access_token is None or time.monotonic() >= self._expires_at:
             self._access_token, self._expires_at = self._fetch_token()
@@ -85,27 +111,56 @@ class ZoomAuth:
         self._expires_at = 0.0
 
 
-def configured_accounts() -> list[ZoomAuth]:
-    """Return ZoomAuth instances for every account with complete credentials."""
+def _build_account_auth(name: str, env_prefix: str) -> ZoomAuth | None:
+    account_id = os.getenv(f"{env_prefix}_ACCOUNT_ID", "").strip()
+    client_id = os.getenv(f"{env_prefix}_CLIENT_ID", "").strip()
+    client_secret = os.getenv(f"{env_prefix}_CLIENT_SECRET", "").strip()
+    access_token = os.getenv(f"{env_prefix}_ACCESS_TOKEN", "").strip()
+
+    if access_token:
+        auth = ZoomAuth(name, account_id, client_id, client_secret, static_token=True)
+        auth._access_token = access_token
+        auth._expires_at = float("inf")
+        return auth
+
+    if account_id and client_id and client_secret:
+        return ZoomAuth(name, account_id, client_id, client_secret)
+
+    return None
+
+
+def auth_status(auth: ZoomAuth) -> tuple[bool, str]:
+    """Return (ok, message) for an account's current auth configuration."""
+    try:
+        auth.get_token()
+        mode = "access token" if auth._static_token else "Server-to-Server OAuth"
+        return True, f"{mode} OK"
+    except ZoomAuthError as exc:
+        auth.invalidate()
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        auth.invalidate()
+        return False, str(exc)
+
+
+def verify_auth(auth: ZoomAuth) -> bool:
+    """Return True when the account can obtain a Zoom access token."""
+    ok, _ = auth_status(auth)
+    return ok
+
+
+def configured_accounts(*, only_working: bool = False) -> list[ZoomAuth]:
+    """Return ZoomAuth instances for every configured account."""
     accounts = [
-        ZoomAuth(
-            name="jward",
-            account_id=os.getenv("ZOOM_JWARD_ACCOUNT_ID", ""),
-            client_id=os.getenv("ZOOM_JWARD_CLIENT_ID", ""),
-            client_secret=os.getenv("ZOOM_JWARD_CLIENT_SECRET", ""),
-        ),
-        ZoomAuth(
-            name="navigators",
-            account_id=os.getenv("ZOOM_NAVIGATORS_ACCOUNT_ID", ""),
-            client_id=os.getenv("ZOOM_NAVIGATORS_CLIENT_ID", ""),
-            client_secret=os.getenv("ZOOM_NAVIGATORS_CLIENT_SECRET", ""),
-        ),
-    ]
-    return [
         auth
-        for auth in accounts
-        if auth.account_id and auth.client_id and auth.client_secret
+        for name, prefix in ACCOUNT_ENV_PREFIXES.items()
+        if (auth := _build_account_auth(name, prefix)) is not None
     ]
+
+    if only_working:
+        accounts = [auth for auth in accounts if verify_auth(auth)]
+
+    return accounts
 
 
 def auth_for_account_id(account_id: str) -> ZoomAuth | None:
@@ -152,7 +207,12 @@ def download_recording(download_url: str, dest_path: str, account_id: str | None
     last_error: Exception | None = None
 
     for auth in iter_download_auths(account_id):
-        token = auth.get_token()
+        try:
+            token = auth.get_token()
+        except ZoomAuthError as exc:
+            last_error = exc
+            continue
+
         try:
             with requests.get(
                 download_url,
@@ -184,7 +244,8 @@ def download_recording(download_url: str, dest_path: str, account_id: str | None
     if last_error:
         raise RuntimeError(f"All Zoom download attempts failed: {last_error}") from last_error
     raise RuntimeError(
-        "No Zoom credentials configured. Set ZOOM_JWARD_* / ZOOM_NAVIGATORS_* or ZOOM_ACCESS_TOKEN."
+        "No Zoom credentials configured. Set ZOOM_JWARD_* / ZOOM_NAVIGATORS_* "
+        "or per-account ZOOM_*_ACCESS_TOKEN values."
     )
 
 

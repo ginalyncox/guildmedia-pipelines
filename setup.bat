@@ -40,18 +40,18 @@ if exist .env del /f .env
 :: Write .env directly
 (
 echo # --- Zoom: jward account ---
-echo ZOOM_JWARD_ACCOUNT_ID=ozXPySCRQnW92mKd_AShsg
-echo ZOOM_JWARD_CLIENT_ID=lcOk4NTD2zQxltnJ4Rkw
-echo ZOOM_JWARD_CLIENT_SECRET=GhiFiNrvM8HBGpEDdUwzCDyWmDn2ZoqM
+echo ZOOM_JWARD_ACCOUNT_ID=your_jward_account_id
+echo ZOOM_JWARD_CLIENT_ID=your_jward_client_id
+echo ZOOM_JWARD_CLIENT_SECRET=your_jward_client_secret
 echo.
 echo # --- Zoom: navigators account ---
-echo ZOOM_NAVIGATORS_ACCOUNT_ID=UHZIXq4nQ3az3UUaGbVS_g
-echo ZOOM_NAVIGATORS_CLIENT_ID=V61bHTVQTN6obqgfsHKvKQ
-echo ZOOM_NAVIGATORS_CLIENT_SECRET=OXWnDCASnmctIEURI5aTWySl2LNvssm5
+echo ZOOM_NAVIGATORS_ACCOUNT_ID=your_navigators_account_id
+echo ZOOM_NAVIGATORS_CLIENT_ID=your_navigators_client_id
+echo ZOOM_NAVIGATORS_CLIENT_SECRET=your_navigators_client_secret
 echo.
 echo # --- Zoom: webhook secrets (one per account) ---
-echo ZOOM_JWARD_WEBHOOK_SECRET=zHYLVSxdQaicUKlrvmCSrA
-echo ZOOM_NAVIGATORS_WEBHOOK_SECRET=KirrzOpeQRygBPZIwBVomg
+echo ZOOM_JWARD_WEBHOOK_SECRET=your_jward_webhook_secret
+echo ZOOM_NAVIGATORS_WEBHOOK_SECRET=your_navigators_webhook_secret
 echo.
 echo # --- YouTube ---
 echo YOUTUBE_PLAYLIST_NAME=Replays

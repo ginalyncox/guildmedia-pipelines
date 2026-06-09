@@ -24,7 +24,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from processing_state import load_processed_keys, mark_processed, recording_key
-from zoom_auth import ZoomAuth, configured_accounts, zoom_api_get
+from zoom_auth import ZoomAuth, auth_status, configured_accounts, zoom_api_get
 
 # ---------------------------------------------------------------------------
 # Load environment variables from .env in the same directory as this script
@@ -306,8 +306,17 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
             client_secret=acct["client_secret"],
         )
 
+        ok, message = auth_status(auth)
+        if not ok:
+            logger.error("[%s] Zoom OAuth failed — skipping account. %s", auth.name, message)
+            continue
+
         # Fetch + filter for this account
-        raw_meetings = fetch_all_recordings(auth)
+        try:
+            raw_meetings = fetch_all_recordings(auth)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[%s] Could not list recordings — skipping: %s", auth.name, exc)
+            continue
         recordings   = filter_recordings(raw_meetings)
         total_found  = len(recordings)
         total_found_all += total_found
