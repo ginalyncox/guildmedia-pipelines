@@ -36,6 +36,7 @@ load_dotenv(SCRIPT_DIR / ".env")
 logger = logging.getLogger("replay_tracker")
 
 WP_PIPELINE_RUNS_PATH = "/wp-json/gg/v1/pipeline-runs"
+WP_PIPELINE_RUNS_PROBE_PATH = "/wp-json/gg/v1/pipeline-runs/probe"
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -328,6 +329,11 @@ def append_row(record: dict[str, Any]) -> None:
     headers = ensure_headers()
     column_map = resolve_column_map(headers)
     if not column_map:
+        if any(header.strip() for header in headers):
+            raise RuntimeError(
+                "Tracker sheet row 1 has no recognizable headers; refusing to append "
+                "because values could be written under the wrong columns."
+            )
         logger.warning(
             "Tracker sheet row 1 has no recognizable headers. "
             "Expected labels like Topic, Recording Date, YouTube URL, Status."
@@ -445,7 +451,7 @@ def _cmd_test() -> int:
             base_url = os.getenv("WP_BASE_URL", "").rstrip("/")
             try:
                 response = requests.get(
-                    f"{base_url}{WP_PIPELINE_RUNS_PATH}",
+                    f"{base_url}{WP_PIPELINE_RUNS_PROBE_PATH}",
                     auth=(
                         os.getenv("WP_USER", ""),
                         os.getenv("WP_APP_PASSWORD", "").replace(" ", ""),
@@ -462,8 +468,7 @@ def _cmd_test() -> int:
                     print("FAIL  WordPress tracker auth failed — check WP_USER / WP_APP_PASSWORD")
                     ok = False
                 elif response.ok:
-                    count = response.json().get("count", 0)
-                    print(f"OK    WordPress tracker reachable ({count} recent runs)")
+                    print("OK    WordPress tracker logging endpoint reachable")
                 else:
                     print(f"FAIL  WordPress tracker HTTP {response.status_code}")
                     ok = False
@@ -486,7 +491,13 @@ def _cmd_test() -> int:
 
 
 def _cmd_headers() -> int:
-    for header in read_headers() if is_configured() else DEFAULT_HEADERS:
+    backend = tracker_backend()
+    headers = (
+        read_headers()
+        if backend in {"sheets", "both"} and sheets_is_configured()
+        else DEFAULT_HEADERS
+    )
+    for header in headers:
         print(header)
     return 0
 

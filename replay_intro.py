@@ -66,6 +66,7 @@ def _require_ffmpeg() -> None:
 def _escape_drawtext(value: str) -> str:
     """Escape text for ffmpeg drawtext filter values."""
     escaped = value.replace("\\", "\\\\")
+    escaped = escaped.replace("\n", r"\n")
     escaped = escaped.replace(":", r"\:")
     escaped = escaped.replace("'", r"\'")
     escaped = escaped.replace("%", r"\%")

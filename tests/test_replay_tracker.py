@@ -1,5 +1,7 @@
 """Unit tests for replay_tracker header mapping (no Google API calls)."""
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -8,6 +10,10 @@ from pathlib import Path
 
 from replay_tracker import (
     DEFAULT_HEADERS,
+    WP_PIPELINE_RUNS_PROBE_PATH,
+    _cmd_headers,
+    _cmd_test,
+    append_row,
     resolve_column_map,
     spreadsheet_id_from_gsheet_file,
     tracker_backend,
@@ -62,6 +68,51 @@ class ReplayTrackerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(spreadsheet_id_from_gsheet_file(shortcut), "abc123XYZ")
+
+    def test_headers_command_uses_defaults_for_wordpress_backend(self):
+        with unittest.mock.patch.dict(
+            "os.environ",
+            {
+                "REPLAY_TRACKER_BACKEND": "wordpress",
+                "WP_BASE_URL": "https://example.com",
+                "WP_USER": "user",
+                "WP_APP_PASSWORD": "pass",
+            },
+        ), unittest.mock.patch("replay_tracker.read_headers") as read_headers:
+            read_headers.side_effect = AssertionError("Sheets API should not be called")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(_cmd_headers(), 0)
+            self.assertEqual(output.getvalue().splitlines(), DEFAULT_HEADERS)
+
+    def test_append_row_rejects_unrecognized_existing_headers(self):
+        with unittest.mock.patch(
+            "replay_tracker.sheets_is_configured",
+            return_value=True,
+        ), unittest.mock.patch(
+            "replay_tracker.ensure_headers", return_value=["Custom A", "Custom B"]
+        ):
+            with self.assertRaises(RuntimeError):
+                append_row({"topic": "Guild Monthly Webinar", "status": "uploaded"})
+
+    def test_wordpress_test_uses_logging_probe_endpoint(self):
+        response = unittest.mock.Mock(status_code=200, ok=True)
+        with unittest.mock.patch.dict(
+            "os.environ",
+            {
+                "REPLAY_TRACKER_BACKEND": "wordpress",
+                "WP_BASE_URL": "https://example.com",
+                "WP_USER": "user",
+                "WP_APP_PASSWORD": "pass",
+            },
+        ), unittest.mock.patch("replay_tracker.requests.get", return_value=response) as get:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(_cmd_test(), 0)
+            self.assertEqual(
+                get.call_args.args[0],
+                f"https://example.com{WP_PIPELINE_RUNS_PROBE_PATH}",
+            )
 
 
 if __name__ == "__main__":

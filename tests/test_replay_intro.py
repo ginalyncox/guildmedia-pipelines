@@ -9,6 +9,9 @@ class ReplayIntroTests(unittest.TestCase):
     def test_escape_drawtext_handles_special_chars(self):
         self.assertEqual(_escape_drawtext("Topic: A & B"), r"Topic\: A & B")
 
+    def test_escape_drawtext_escapes_newlines(self):
+        self.assertEqual(_escape_drawtext("Line 1\nLine 2"), r"Line 1\nLine 2")
+
     def test_wrap_title_splits_long_lines(self):
         wrapped = _wrap_title("Guild Monthly Webinar for Product Specialists and Students")
         self.assertIn("\n", wrapped)

@@ -98,6 +98,16 @@ function gg_pipeline_register_rest_routes() {
 
 	register_rest_route(
 		'gg/v1',
+		'/pipeline-runs/probe',
+		[
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => 'gg_pipeline_probe_logging',
+			'permission_callback' => 'gg_pipeline_can_log_runs',
+		]
+	);
+
+	register_rest_route(
+		'gg/v1',
 		'/zoom-webhook',
 		[
 			'methods'             => [ 'GET', 'POST' ],
@@ -137,6 +147,18 @@ function gg_pipeline_can_log_runs() {
  */
 function gg_pipeline_can_view_dashboard() {
 	return current_user_can( 'manage_options' );
+}
+
+/**
+ * Verify credentials can log pipeline runs without writing a row.
+ */
+function gg_pipeline_probe_logging() {
+	return new WP_REST_Response(
+		[
+			'ok' => true,
+		],
+		200
+	);
 }
 
 /**
