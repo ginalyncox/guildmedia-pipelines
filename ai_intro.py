@@ -217,7 +217,7 @@ def _audio_duration_seconds(audio_path: Path) -> float:
         text=True,
         check=True,
     )
-    return max(3.0, min(12.0, float(result.stdout.strip()) + 1.0))
+    return max(3.0, float(result.stdout.strip()) + 1.0)
 
 
 def assemble_ai_intro_video(
