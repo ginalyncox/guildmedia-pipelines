@@ -33,8 +33,15 @@ class PipelineWiringTests(unittest.TestCase):
         self.assertIn("Guild Session", title)
         self.assertIn("2025", title)
 
+    @patch("pipeline.log_pipeline_result")
     @patch("pipeline.cleanup_files")
-    @patch("pipeline.run_wp_post")
+    @patch(
+        "pipeline.run_wp_post",
+        return_value={
+            "wp_post_url": "https://ganjierguild.com/replay/test",
+            "youtube_url": "https://www.youtube.com/watch?v=abc123",
+        },
+    )
     @patch("pipeline.run_canva_thumbnail", return_value=None)
     @patch("pipeline.run_youtube_upload", return_value="abc123")
     @patch("pipeline.run_trim", return_value="/tmp/zoom_pipeline/test_trimmed.mp4")
@@ -51,6 +58,7 @@ class PipelineWiringTests(unittest.TestCase):
         _canva,
         mock_wp,
         _cleanup,
+        mock_tracker,
     ):
         run_pipeline(SAMPLE_PAYLOAD)
 
@@ -62,6 +70,7 @@ class PipelineWiringTests(unittest.TestCase):
         mock_trim.assert_called_once()
         mock_upload.assert_called_once()
         mock_wp.assert_called_once()
+        mock_tracker.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ pip install -r requirements.txt
 | Missed-webhook poller | `python3 poll_zoom.py` |
 | Canva folder / match test | `python3 canva_thumbnail.py --list-folder` / `--match "Topic"` |
 | Zoom credential check | `python3 zoom_verify.py` |
+| Sheets tracker test | `python3 replay_tracker.py --test` |
 
 Start long-running services in **tmux** (e.g. session `pipeline-webhook`). The webhook binds `0.0.0.0:5055`; route `/zoom/webhook` accepts POST.
 
@@ -68,6 +69,8 @@ python3 -m unittest tests.test_pipeline_wiring
 - **YouTube** — Data API v3 (`client_secrets.json` + `token.json`, or `.env` JSON vars)
 - **WordPress** — `ganjierguild.com` REST API (`WP_USER` + `WP_APP_PASSWORD`)
 - **Canva** — OAuth thumbnails from `Replay Thumbnail Folder` (`canva_token.json`)
+- **WordPress tracker** — install `wordpress-plugin/ganjier-replay-pipeline/` (Tools → Replay Pipeline dashboard)
+- **Google Sheets** — optional mirror during migration (`REPLAY_TRACKER_BACKEND=both`)
 
 Verify WordPress auth without creating a post:
 

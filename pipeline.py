@@ -25,6 +25,8 @@ Environment variables (subset — see SETUP.md for full list):
 | CANVA_THUMBNAIL_FOLDER_NAME | no       | Canva folder name (default: Replay Thumbnail Folder)|
 | CANVA_THUMBNAIL_FOLDER_ID   | no       | Optional folder ID fallback if name lookup fails   |
 | WP_REPLAY_CPT               | no       | WordPress CPT slug (default: gc_replay, production: replay) |
+| GOOGLE_SHEETS_SPREADSHEET_ID | no      | Replay Library Tracker sheet ID (optional logging) |
+| GOOGLE_SERVICE_ACCOUNT_JSON | no       | Service account JSON for Sheets API (share sheet with SA email) |
 """
 
 import argparse
@@ -48,6 +50,12 @@ from processing_state import (
     load_processed_keys,
     mark_processed,
     recording_key_from_payload,
+)
+from replay_tracker import (
+    account_label_from_payload,
+    is_configured as tracker_configured,
+    log_pipeline_result,
+    recording_id_from_payload,
 )
 from zoom_auth import download_recording as zoom_download_recording
 
@@ -307,7 +315,7 @@ def run_wp_post(
     description: str,
     date: datetime,
     local_thumbnail_path: str | None = None,
-) -> None:
+) -> dict:
     """
     Call create_replay_post() from post_to_replay_library.py.
 
@@ -346,9 +354,10 @@ def run_wp_post(
     if local_thumbnail_path is not None:
         kwargs["local_thumbnail_path"] = local_thumbnail_path
 
-    create_replay_post(**kwargs)
+    result = create_replay_post(**kwargs)
 
     logger.info("WordPress post created successfully.")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +378,27 @@ def cleanup_files(*paths: str) -> None:
 # ---------------------------------------------------------------------------
 # Core pipeline
 # ---------------------------------------------------------------------------
+
+def _log_tracker_failure(
+    payload: dict,
+    topic: str,
+    start_dt: datetime,
+    duration: int,
+    step: str,
+    exc: Exception,
+) -> None:
+    if not tracker_configured():
+        return
+    log_pipeline_result(
+        topic=topic,
+        recording_date=start_dt,
+        duration_minutes=duration,
+        status=f"failed ({step})",
+        zoom_account=account_label_from_payload(payload),
+        error=str(exc),
+        recording_id=recording_id_from_payload(payload),
+    )
+
 
 def run_pipeline(payload: dict) -> None:
     """
@@ -442,6 +472,7 @@ def run_pipeline(payload: dict) -> None:
         download_recording(download_url, raw_path, account_id=account_id)
     except Exception as exc:
         logger.error("[1/5] Download failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "download", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
     logger.info("[1/5] Download finished in %.1fs", time.monotonic() - t0)
@@ -455,6 +486,7 @@ def run_pipeline(payload: dict) -> None:
         run_trim(raw_path, trimmed_path)
     except Exception as exc:
         logger.error("[2/5] Trim failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "trim", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
     logger.info("[2/5] Trim finished in %.1fs", time.monotonic() - t0)
@@ -473,6 +505,7 @@ def run_pipeline(payload: dict) -> None:
         )
     except Exception as exc:
         logger.error("[3/6] YouTube upload failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "youtube", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
     logger.info("[3/6] YouTube upload finished in %.1fs", time.monotonic() - t0)
@@ -493,10 +526,16 @@ def run_pipeline(payload: dict) -> None:
     logger.info("[5/6] Creating WordPress replay post …")
     t0 = time.monotonic()
     try:
-        run_wp_post(video_id, title, description, start_dt,
-                    local_thumbnail_path=canva_thumbnail_path)
+        wp_result = run_wp_post(
+            video_id,
+            title,
+            description,
+            start_dt,
+            local_thumbnail_path=canva_thumbnail_path,
+        )
     except Exception as exc:
         logger.error("[5/6] WordPress post failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "wordpress", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
     logger.info("[5/6] WordPress post finished in %.1fs", time.monotonic() - t0)
@@ -509,6 +548,17 @@ def run_pipeline(payload: dict) -> None:
         raw_path,
         trimmed_path,
         canva_thumbnail_path if canva_thumbnail_path and canva_thumbnail_path.startswith(TEMP_DIR) else None,
+    )
+
+    log_pipeline_result(
+        topic=topic,
+        recording_date=start_dt,
+        duration_minutes=duration,
+        status="completed",
+        zoom_account=account_label_from_payload(payload),
+        youtube_url=wp_result.get("youtube_url", f"https://www.youtube.com/watch?v={video_id}"),
+        wp_url=wp_result.get("wp_post_url", ""),
+        recording_id=recording_id_from_payload(payload),
     )
 
     logger.info("Pipeline completed successfully for: %s", title)

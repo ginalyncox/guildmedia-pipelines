@@ -45,6 +45,7 @@ SCRIPTS = [
     "upload_youtube.py",
     "trim_video.py",
     "post_to_replay_library.py",
+    "replay_tracker.py",
 ]
 
 SERVICES = [
@@ -148,6 +149,35 @@ files = {
 }
 for fname, (present, fix) in files.items():
     check(fname, present, fix)
+
+# --- 4b. Replay tracker (WordPress plugin / optional Sheets) ---
+print(f"\n[4b/7] Replay tracker...")
+try:
+    from oauth_files import ensure_service_account_file, service_account_ready
+    from replay_tracker import (
+        sheets_is_configured,
+        tracker_backend,
+        wp_is_configured,
+    )
+
+    ensure_service_account_file()
+    backend = tracker_backend()
+    ok(f"Tracker backend mode: {backend}")
+    if backend in {"wordpress", "both"}:
+        if wp_is_configured():
+            ok("WordPress tracker credentials present (install ganjier-replay-pipeline plugin)")
+        else:
+            warn("WordPress tracker credentials missing")
+    if backend in {"sheets", "both"}:
+        if sheets_is_configured():
+            ok("Google Sheets tracker configured")
+        else:
+            warn(
+                "Sheets mirror not configured — set GOOGLE_SHEETS_SPREADSHEET_ID and "
+                "GOOGLE_SERVICE_ACCOUNT_JSON if needed"
+            )
+except ImportError as exc:
+    warn(f"replay_tracker import failed ({exc})")
 
 # --- 5. Zoom OAuth per account ---
 print(f"\n[5/7] Zoom OAuth...")

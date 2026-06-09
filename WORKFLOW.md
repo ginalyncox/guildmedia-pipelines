@@ -15,6 +15,7 @@ Zoom recording ends
   → upload to YouTube (unlisted, added to Replays playlist)
   → fetch Canva thumbnail (optional)
   → create WordPress replay post on ganjierguild.com
+  → log run to WordPress dashboard (Tools → Replay Pipeline)
   → clean up temp files
 ```
 
@@ -151,6 +152,35 @@ The replay post is still created.
 
 ---
 
+## Replay Pipeline dashboard (WordPress plugin)
+
+The tracker lives in WordPress — not a separate spreadsheet. Install the plugin
+from `wordpress-plugin/ganjier-replay-pipeline/` and view it at **Tools → Replay Pipeline**.
+
+### One-time setup
+
+1. Zip and upload the plugin folder via WordPress Admin → Plugins → Add New.
+2. Activate **Ganjier Replay Pipeline**.
+3. Deactivate the old **Zoom Webhook Bridge** plugin if present (the new plugin includes it).
+4. Point Zoom webhooks at `https://ganjierguild.com/wp-json/gg/v1/zoom-webhook`.
+
+The Python pipeline logs each run automatically using existing `WP_USER` /
+`WP_APP_PASSWORD` credentials. No extra secrets are required.
+
+### Verify
+
+```bash
+python3 replay_tracker.py --test
+```
+
+### Optional Google Sheets mirror (migration only)
+
+To keep the Shared Drive sheet in sync during migration, set
+`REPLAY_TRACKER_BACKEND=both` and configure `GOOGLE_SHEETS_SPREADSHEET_ID` plus a
+service account. See `.env.example`.
+
+---
+
 ## Diagnostics
 
 ```bash
@@ -178,6 +208,8 @@ python3 -m unittest tests.test_pipeline_wiring
 | YouTube | `YOUTUBE_PLAYLIST_NAME` | `client_secrets.json`, `token.json` |
 | WordPress | `WP_BASE_URL`, `WP_USER`, `WP_APP_PASSWORD`, `WP_REPLAY_CPT` | — |
 | Canva | `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`, `CANVA_THUMBNAIL_FOLDER_NAME` | `canva_token.json` |
+| Replay tracker | `REPLAY_TRACKER_BACKEND`, `WP_*` (WordPress default) | `wordpress-plugin/ganjier-replay-pipeline/` plugin |
+| Sheets mirror (optional) | `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON` | `service_account.json` |
 
 See `SETUP.md` for full setup steps and `READY_CHECKLIST.md` for remaining blockers.
 
