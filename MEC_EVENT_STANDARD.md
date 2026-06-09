@@ -125,26 +125,21 @@ appear on this event page.</em></p>
 | About paragraph | Yes | Public calendar quality |
 | Replay note | Recommended | Sets expectation; replay link is added by pipeline |
 
-### Example — All Hands On Deck
+### Copy-paste templates per series
 
-```html
-<p><strong>All Hands On Deck</strong><br />
-A Ganjier Guild weekly gathering</p>
+Ready-made titles, Zoom topics, and description HTML for every live series:
 
-<p><strong>Schedule</strong><br />
-Fridays | 11:00 AM–12:00 PM CT | Via Zoom</p>
+**[`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)**
 
-<p><strong>Join live</strong><br />
-<a href="https://zoom.us/j/94065932895">Join on Zoom</a><br />
-Meeting ID: 940 6593 2895</p>
+Includes blocks for:
 
-<p><strong>About this session</strong><br />
-All Hands On Deck is the Guild's weekly open session where members connect, share
-updates, and collaborate. Bring questions, ideas, or just check in with the community.</p>
-
-<p><em>Replay: published automatically after the session ends. A replay link will
-appear on this event page.</em></p>
-```
+- All Hands On Deck
+- Farm Focus
+- Open Session
+- Knowledge Building
+- State of the Guild
+- Navigator Session
+- Special / one-off sessions
 
 ---
 
@@ -168,9 +163,12 @@ Assign one category per series. Keeps the public calendar filterable.
 | Series | Suggested category |
 |---|---|
 | All Hands On Deck | `All Hands On Deck` |
-| Navigator Session | `Navigators` |
-| Community Education | `Community Education` |
-| Certification / training | `Certification` |
+| Farm Focus | `Farm Focus` |
+| Open Session | `Open Sessions` |
+| Knowledge Building | `Knowledge Building` |
+| State of the Guild | `State of the Guild` |
+| Navigator Session | `Community Education` |
+| Special / one-off | `Special Sessions` |
 
 ### Speaker (`mec_speaker`)
 

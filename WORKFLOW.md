@@ -79,8 +79,8 @@ Use a consistent, descriptive topic string. The MEC event title must contain the
 same session name (e.g. Zoom topic `All Hands On Deck` → MEC title
 `Ganjier Guild – All Hands On Deck`).
 
-**Full standard:** see [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md) for required
-title format, description template, categories, and pre-flight checklists.
+**Full standard:** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md)  
+**Copy-paste per series:** [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)
 
 ---
 
@@ -106,6 +106,21 @@ python3 backfill.py --dry-run
 python3 backfill.py --account jward --dry-run
 python3 backfill.py --account navigators --dry-run
 ```
+
+### Test with yesterday only (recommended first)
+
+```bash
+python3 backfill.py --yesterday --dry-run
+python3 backfill.py --yesterday
+```
+
+Or an explicit single day:
+
+```bash
+python3 backfill.py --from-date 2026-06-08 --to-date 2026-06-08 --dry-run
+```
+
+When that works, widen the window via `.env` (`BACKFILL_FROM_DATE`) or `--from-date`.
 
 ### Process missed recordings
 
@@ -224,7 +239,7 @@ MEC_MATCH_MIN_SCORE=40
 Matching uses the site timezone and checks the recording date ±1 day for recurring
 events like *All Hands On Deck*.
 
-**Operator standard (titles, descriptions, checklists):** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md)
+**Operator standard:** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md) · **Series copy-paste blocks:** [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)
 
 ---
 
