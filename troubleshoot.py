@@ -38,6 +38,8 @@ REQUIRED_PACKAGES = [
 SCRIPTS = [
     "pipeline.py",
     "backfill.py",
+    "poll_zoom.py",
+    "zoom_auth.py",
     "canva_thumbnail.py",
     "upload_youtube.py",
     "trim_video.py",
@@ -77,7 +79,7 @@ ok(f"Python {sys.version.split()[0]}  (executable: {sys.executable})")
 print(f"\n[2/6] .env file...")
 env_path = os.path.join(SCRIPT_DIR, ".env")
 if not os.path.exists(env_path):
-    fail(f".env not found at {env_path}  →  run: py setup.py")
+    fail(f".env not found at {env_path}  →  run: python setup.py")
     errors += 1
 else:
     ok(f".env found at {env_path}")
@@ -162,10 +164,11 @@ print()
 print("=" * 60)
 if errors == 0:
     print("  All checks passed. Ready to run:")
-    print("    py canva_thumbnail.py --auth")
-    print("    py backfill.py --dry-run")
-    print("    py pipeline.py --webhook")
+    print("    python canva_thumbnail.py --auth")
+    print("    python backfill.py --dry-run")
+    print("    python pipeline.py --webhook")
 else:
     print(f"  {errors} issue(s) found. Fix items marked FAIL/MISSING above.")
 print("=" * 60)
-input("\nPress Enter to exit...")
+if sys.stdin.isatty():
+    input("\nPress Enter to exit...")

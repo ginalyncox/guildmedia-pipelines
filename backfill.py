@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import base64
 import json
 import logging
 import os
@@ -22,8 +21,10 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
+
+from processing_state import load_processed_keys, mark_processed, recording_key
+from zoom_auth import ZoomAuth, configured_accounts, zoom_api_get
 
 # ---------------------------------------------------------------------------
 # Load environment variables from .env in the same directory as this script
@@ -33,20 +34,13 @@ load_dotenv(SCRIPT_DIR / ".env")
 
 ZOOM_ACCOUNTS = [
     {
-        "name": "jward",
-        "account_id": os.getenv("ZOOM_JWARD_ACCOUNT_ID", ""),
-        "client_id": os.getenv("ZOOM_JWARD_CLIENT_ID", ""),
-        "client_secret": os.getenv("ZOOM_JWARD_CLIENT_SECRET", ""),
-    },
-    {
-        "name": "navigators",
-        "account_id": os.getenv("ZOOM_NAVIGATORS_ACCOUNT_ID", ""),
-        "client_id": os.getenv("ZOOM_NAVIGATORS_CLIENT_ID", ""),
-        "client_secret": os.getenv("ZOOM_NAVIGATORS_CLIENT_SECRET", ""),
-    },
+        "name": auth.name,
+        "account_id": auth.account_id,
+        "client_id": auth.client_id,
+        "client_secret": auth.client_secret,
+    }
+    for auth in configured_accounts()
 ]
-# Filter out accounts with missing credentials
-ZOOM_ACCOUNTS = [a for a in ZOOM_ACCOUNTS if a["account_id"] and a["client_id"] and a["client_secret"]]
 
 BACKFILL_FROM_DATE   = os.getenv("BACKFILL_FROM_DATE", "2020-01-01")
 BACKFILL_DELAY_SEC   = float(os.getenv("BACKFILL_DELAY_SECONDS", "5"))
@@ -117,143 +111,6 @@ def reset_state() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Zoom Server-to-Server OAuth token management
-# ---------------------------------------------------------------------------
-
-
-class ZoomAuth:
-    """
-    Manages a Zoom Server-to-Server OAuth token for a single account.
-    Instantiate once per account; tokens are cached per instance.
-    """
-
-    def __init__(self, name: str, account_id: str, client_id: str, client_secret: str) -> None:
-        self.name          = name
-        self.account_id    = account_id
-        self.client_id     = client_id
-        self.client_secret = client_secret
-        self._access_token: str | None = None
-        self._expires_at: float = 0.0
-
-    def _fetch_token(self) -> tuple[str, float]:
-        """
-        Obtain a new Zoom Server-to-Server OAuth access token.
-
-        Uses Basic auth (base64-encoded client_id:client_secret) and posts to
-        https://zoom.us/oauth/token with grant_type=account_credentials.
-        """
-        if not all([self.account_id, self.client_id, self.client_secret]):
-            raise RuntimeError(
-                f"[{self.name}] account_id, client_id, and client_secret must all be set in .env"
-            )
-
-        credentials = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode("utf-8")
-        ).decode("utf-8")
-
-        url = f"https://zoom.us/oauth/token?grant_type=account_credentials&account_id={self.account_id}"
-        resp = requests.post(
-            url,
-            headers={
-                "Authorization": f"Basic {credentials}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        access_token = data.get("access_token")
-        expires_in   = int(data.get("expires_in", 3600))
-
-        if not access_token:
-            raise RuntimeError(f"[{self.name}] Token response missing access_token: {data}")
-
-        logger.debug("[%s] Fetched new Zoom OAuth token (expires in %ds).", self.name, expires_in)
-        return access_token, time.monotonic() + expires_in - 60  # 60-second safety buffer
-
-    def get_token(self) -> str:
-        """
-        Return a valid Zoom access token, refreshing automatically when expired.
-        Token is cached in memory for the lifetime of this instance.
-        """
-        if self._access_token is None or time.monotonic() >= self._expires_at:
-            self._access_token, self._expires_at = self._fetch_token()
-        return self._access_token
-
-    def invalidate(self) -> None:
-        """Force token refresh on next get_token() call."""
-        self._access_token = None
-        self._expires_at   = 0.0
-
-
-# ---------------------------------------------------------------------------
-# Zoom API helpers
-# ---------------------------------------------------------------------------
-
-def _zoom_get(path: str, auth: ZoomAuth, params: dict | None = None, *, retries: int = 5) -> dict:
-    """
-    Make an authenticated GET request to the Zoom API.
-    Automatically handles 401 (re-fetches token) and 429 (exponential backoff).
-
-    Parameters
-    ----------
-    path : str
-        API path starting with /v2/, e.g. "/v2/users/me/recordings".
-    auth : ZoomAuth
-        ZoomAuth instance for the account making the request.
-    params : dict, optional
-        Query parameters.
-    retries : int
-        Max retry attempts for recoverable errors.
-
-    Returns
-    -------
-    dict
-        Parsed JSON response body.
-    """
-    url = f"https://api.zoom.us{path}"
-    wait = 2.0
-
-    for attempt in range(1, retries + 1):
-        token = auth.get_token()
-        resp  = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            params=params or {},
-            timeout=60,
-        )
-
-        if resp.status_code == 200:
-            return resp.json()
-
-        if resp.status_code == 401:
-            # Force token refresh
-            logger.warning("[%s] Zoom API returned 401 — refreshing token (attempt %d/%d).", auth.name, attempt, retries)
-            auth.invalidate()
-            time.sleep(wait)
-            wait = min(wait * 2, 60)
-            continue
-
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", str(int(wait))))
-            logger.warning(
-                "[%s] Zoom API rate-limited (429). Waiting %ds before retry (attempt %d/%d).",
-                auth.name, retry_after, attempt, retries,
-            )
-            time.sleep(retry_after)
-            wait = min(wait * 2, 120)
-            continue
-
-        # Other non-success responses
-        raise RuntimeError(
-            f"[{auth.name}] Zoom API {path} returned HTTP {resp.status_code}: {resp.text[:300]}"
-        )
-
-    raise RuntimeError(f"[{auth.name}] Zoom API {path} failed after {retries} attempts.")
-
-
-# ---------------------------------------------------------------------------
 # Fetch all recordings
 # ---------------------------------------------------------------------------
 
@@ -293,7 +150,7 @@ def fetch_all_recordings(auth: ZoomAuth) -> list[dict]:
         if next_page_token:
             params["next_page_token"] = next_page_token
 
-        data = _zoom_get("/v2/users/me/recordings", auth, params)
+        data = zoom_api_get("/v2/users/me/recordings", auth, params)
 
         page_meetings = data.get("meetings", [])
         meetings.extend(page_meetings)
@@ -357,7 +214,7 @@ def filter_recordings(meetings: list[dict]) -> list[dict]:
 # Build pipeline payload
 # ---------------------------------------------------------------------------
 
-def build_pipeline_payload(recording: dict) -> dict:
+def build_pipeline_payload(recording: dict, account_id: str) -> dict:
     """
     Construct a Zoom recording.completed webhook payload dict
     from a normalised recording dict, matching the shape expected by run_pipeline().
@@ -366,6 +223,7 @@ def build_pipeline_payload(recording: dict) -> dict:
     return {
         "event": "recording.completed",
         "payload": {
+            "account_id": account_id,
             "object": {
                 "uuid":      recording["uuid"],
                 "topic":     recording["topic"],
@@ -423,7 +281,7 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
 
     # Load existing state
     state = load_state()
-    processed_set = set(state["processed"])
+    processed_set = load_processed_keys()
     failed_map    = state["failed"]
 
     total_found_all    = 0
@@ -460,7 +318,7 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
 
         # State keys are "{account_name}:{meeting_uuid}" to avoid cross-account collisions
         def _state_key(uuid: str) -> str:
-            return f"{auth.name}:{uuid}"
+            return recording_key(auth.name, uuid)
 
         # Determine which recordings to process
         if retry_failed:
@@ -518,13 +376,14 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
 
             logger.info("Processing: %s (uuid=%s)", label, uuid)
 
-            payload = build_pipeline_payload(rec)
+            payload = build_pipeline_payload(rec, auth.account_id)
             try:
                 run_pipeline(payload)
                 # Success
                 if key not in state["processed"]:
                     state["processed"].append(key)
                 processed_set.add(key)
+                mark_processed(key)
                 # Remove from failed if it was there
                 state["failed"].pop(key, None)
                 save_state(state)

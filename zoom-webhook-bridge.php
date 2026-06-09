@@ -17,7 +17,7 @@ add_action( 'rest_api_init', function () {
 } );
 
 function gg_zoom_webhook_proxy( WP_REST_Request $request ) {
-    $pipeline_url = 'http://127.0.0.1:5055/webhook';
+    $pipeline_url = 'http://127.0.0.1:5055/zoom/webhook';
 
     $body    = $request->get_body();
     $headers = $request->get_headers();
