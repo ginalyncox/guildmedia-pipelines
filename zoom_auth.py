@@ -20,11 +20,20 @@ load_dotenv()
 class ZoomAuth:
     """Manages a Zoom Server-to-Server OAuth token for a single account."""
 
-    def __init__(self, name: str, account_id: str, client_id: str, client_secret: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        account_id: str,
+        client_id: str,
+        client_secret: str,
+        *,
+        static_token: bool = False,
+    ) -> None:
         self.name = name
         self.account_id = account_id
         self.client_id = client_id
         self.client_secret = client_secret
+        self._static_token = static_token
         self._access_token: str | None = None
         self._expires_at: float = 0.0
 
@@ -61,11 +70,17 @@ class ZoomAuth:
         return access_token, time.monotonic() + expires_in - 60
 
     def get_token(self) -> str:
+        if self._static_token:
+            if self._access_token is None:
+                raise RuntimeError(f"[{self.name}] static access token is not set")
+            return self._access_token
         if self._access_token is None or time.monotonic() >= self._expires_at:
             self._access_token, self._expires_at = self._fetch_token()
         return self._access_token
 
     def invalidate(self) -> None:
+        if self._static_token:
+            return
         self._access_token = None
         self._expires_at = 0.0
 
@@ -112,9 +127,9 @@ def iter_download_auths(account_id: str | None = None) -> Iterator[ZoomAuth]:
     if not auths:
         legacy_token = os.getenv("ZOOM_ACCESS_TOKEN", "").strip()
         if legacy_token:
-            legacy = ZoomAuth("legacy", "legacy", "legacy", "legacy")
+            legacy = ZoomAuth("legacy", "", "", "", static_token=True)
             legacy._access_token = legacy_token
-            legacy._expires_at = time.monotonic() + 3600
+            legacy._expires_at = float("inf")
             yield legacy
         return
 

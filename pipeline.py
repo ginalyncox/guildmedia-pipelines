@@ -43,6 +43,11 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from processing_state import (
+    load_processed_keys,
+    mark_processed,
+    recording_key_from_payload,
+)
 from zoom_auth import download_recording as zoom_download_recording
 
 # ---------------------------------------------------------------------------
@@ -85,6 +90,9 @@ logger = logging.getLogger("zoom_pipeline")
 logger.setLevel(logging.DEBUG)
 logger.addHandler(_file_handler)
 logger.addHandler(_stream_handler)
+
+_active_pipeline_keys: set[str] = set()
+_active_pipeline_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +605,18 @@ def run_webhook_server() -> None:
         logger.info("Received Zoom event: %s", event_type)
 
         if event_type == "recording.completed":
+            recording_key = recording_key_from_payload(payload)
+            if recording_key and recording_key in load_processed_keys():
+                logger.info("Recording already processed; skipping: %s", recording_key)
+                return jsonify({"status": "skipped", "reason": "already_processed"}), 200
+
+            if recording_key:
+                with _active_pipeline_lock:
+                    if recording_key in _active_pipeline_keys:
+                        logger.info("Pipeline already running for recording: %s", recording_key)
+                        return jsonify({"status": "accepted", "reason": "already_running"}), 200
+                    _active_pipeline_keys.add(recording_key)
+
             logger.info("Triggering pipeline for recording.completed event.")
             # Respond immediately so Zoom does not time out; process in background.
             def _run_pipeline_safe() -> None:
@@ -606,6 +626,13 @@ def run_webhook_server() -> None:
                     logger.error("Pipeline exited with code %s", exc.code)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Pipeline failed: %s", exc, exc_info=True)
+                else:
+                    if recording_key:
+                        mark_processed(recording_key)
+                finally:
+                    if recording_key:
+                        with _active_pipeline_lock:
+                            _active_pipeline_keys.discard(recording_key)
 
             threading.Thread(target=_run_pipeline_safe, daemon=True).start()
             return jsonify({"status": "accepted"}), 200

@@ -23,6 +23,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from processing_state import load_processed_keys, mark_processed, recording_key
 from zoom_auth import ZoomAuth, configured_accounts, zoom_api_get
 
 # ---------------------------------------------------------------------------
@@ -280,7 +281,7 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
 
     # Load existing state
     state = load_state()
-    processed_set = set(state["processed"])
+    processed_set = load_processed_keys()
     failed_map    = state["failed"]
 
     total_found_all    = 0
@@ -317,7 +318,7 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
 
         # State keys are "{account_name}:{meeting_uuid}" to avoid cross-account collisions
         def _state_key(uuid: str) -> str:
-            return f"{auth.name}:{uuid}"
+            return recording_key(auth.name, uuid)
 
         # Determine which recordings to process
         if retry_failed:
@@ -382,6 +383,7 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
                 if key not in state["processed"]:
                     state["processed"].append(key)
                 processed_set.add(key)
+                mark_processed(key)
                 # Remove from failed if it was there
                 state["failed"].pop(key, None)
                 save_state(state)

@@ -8,7 +8,6 @@ Run every 30 minutes via cron when webhook delivery is unreliable:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -20,13 +19,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from backfill import build_pipeline_payload, filter_recordings
+from processing_state import load_processed_keys, mark_processed, recording_key
 from zoom_auth import ZoomAuth, configured_accounts, zoom_api_get
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 load_dotenv(SCRIPT_DIR / ".env")
 
 LOOKBACK_HOURS = int(os.getenv("POLL_LOOKBACK_HOURS", "48"))
-STATE_FILE = SCRIPT_DIR / "logs" / "processed_ids.json"
 
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -41,25 +40,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("poll_zoom")
-
-
-def load_processed_ids() -> set[str]:
-    if not STATE_FILE.exists():
-        return set()
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return set(data.get("processed", []))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Could not read %s (%s) — starting fresh.", STATE_FILE, exc)
-        return set()
-
-
-def save_processed_ids(processed: set[str]) -> None:
-    tmp_path = STATE_FILE.with_suffix(".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as fh:
-        json.dump({"processed": sorted(processed)}, fh, indent=2)
-    tmp_path.replace(STATE_FILE)
 
 
 def fetch_recent_recordings(auth: ZoomAuth) -> list[dict]:
@@ -96,7 +76,7 @@ def main() -> None:
     sys.path.insert(0, str(SCRIPT_DIR))
     from pipeline import run_pipeline  # noqa: WPS433
 
-    processed = load_processed_ids()
+    processed = load_processed_keys()
     new_count = 0
 
     for auth in accounts:
@@ -105,7 +85,7 @@ def main() -> None:
         recordings = filter_recordings(meetings)
 
         for rec in recordings:
-            key = f"{auth.name}:{rec['uuid']}"
+            key = recording_key(auth.name, rec["uuid"])
             if key in processed:
                 continue
 
@@ -117,8 +97,8 @@ def main() -> None:
                 logger.error("[%s] Pipeline failed for %s (exit %s)", auth.name, key, exc.code)
                 continue
 
+            mark_processed(key)
             processed.add(key)
-            save_processed_ids(processed)
             new_count += 1
             time.sleep(float(os.getenv("BACKFILL_DELAY_SECONDS", "5")))
 
