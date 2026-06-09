@@ -39,6 +39,11 @@ Last updated: 2026-05-13
 
 ---
 
+## Workflow instructions
+
+See [`WORKFLOW.md`](WORKFLOW.md) for the full operator runbook, including
+Canva thumbnail folder setup and the per-meeting checklist.
+
 ## First Run Order (once all 4 blockers are cleared)
 
 ```bash

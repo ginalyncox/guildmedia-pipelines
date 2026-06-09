@@ -22,7 +22,8 @@ Environment variables (subset — see SETUP.md for full list):
 | WP_APP_PASSWORD             | yes      | WordPress Application Password                     |
 | TEMP_DIR                    | no       | Temp directory for pipeline files (default /tmp/…) |
 | CANVA_CLIENT_ID             | no       | Canva OAuth client ID — omit to skip thumbnail step|
-| CANVA_THUMBNAIL_FOLDER_ID   | no       | Canva folder ID containing thumbnail designs       |
+| CANVA_THUMBNAIL_FOLDER_NAME | no       | Canva folder name (default: Replay Thumbnail Folder)|
+| CANVA_THUMBNAIL_FOLDER_ID   | no       | Optional folder ID fallback if name lookup fails   |
 | WP_REPLAY_CPT               | no       | WordPress CPT slug (default: gc_replay, production: replay) |
 """
 
