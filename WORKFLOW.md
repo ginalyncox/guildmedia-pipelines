@@ -16,6 +16,7 @@ Zoom recording ends
   → upload to YouTube (unlisted, added to Replays playlist)
   → fetch Canva thumbnail (optional)
   → create WordPress replay post on ganjierguild.com
+  → match + link the MEC calendar event (when a scheduled event matches)
   → log run to WordPress dashboard (Tools → Replay Pipeline)
   → clean up temp files
 ```
@@ -65,15 +66,21 @@ python3 canva_thumbnail.py --list-folder
 python3 canva_thumbnail.py --match "Your Exact Zoom Meeting Topic"
 ```
 
-### 3. Name the Zoom meeting clearly
+### 3. Name the Zoom meeting clearly (and align MEC + Canva)
 
 The Zoom **meeting topic** becomes:
 
 - The YouTube video title (with date appended)
 - The WordPress replay post title
 - The search string for Canva thumbnail matching
+- The primary key for **MEC calendar event** matching
 
-Use a consistent, descriptive topic string.
+Use a consistent, descriptive topic string. The MEC event title must contain the
+same session name (e.g. Zoom topic `All Hands On Deck` → MEC title
+`Ganjier Guild – All Hands On Deck`).
+
+**Full standard:** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md)  
+**Copy-paste per series:** [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)
 
 ---
 
@@ -99,6 +106,21 @@ python3 backfill.py --dry-run
 python3 backfill.py --account jward --dry-run
 python3 backfill.py --account navigators --dry-run
 ```
+
+### Test with yesterday only (recommended first)
+
+```bash
+python3 backfill.py --yesterday --dry-run
+python3 backfill.py --yesterday
+```
+
+Or an explicit single day:
+
+```bash
+python3 backfill.py --from-date 2026-06-08 --to-date 2026-06-08 --dry-run
+```
+
+When that works, widen the window via `.env` (`BACKFILL_FROM_DATE`) or `--from-date`.
 
 ### Process missed recordings
 
@@ -195,6 +217,29 @@ python3 replay_intro.py prepend trimmed.mp4 --title "Meeting Topic" -o /tmp/with
 When Canva is not configured, auth fails, or no design matches, the pipeline
 uses the **YouTube auto-generated thumbnail** for the WordPress featured image.
 The replay post is still created.
+
+---
+
+## MEC calendar event linking
+
+Scheduled sessions on ganjierguild.com use **Modern Events Calendar** (`mec-events`).
+After each replay is published, the pipeline:
+
+1. Finds the MEC event on the recording date whose title matches the Zoom topic
+2. Stores replay + YouTube links on that event
+3. Shows a **Replay available** notice on the MEC event page
+
+Requires the updated **Ganjier Replay Pipeline** plugin (v1.1+).
+
+```env
+MEC_LINK_ENABLED=true
+MEC_MATCH_MIN_SCORE=40
+```
+
+Matching uses the site timezone and checks the recording date ±1 day for recurring
+events like *All Hands On Deck*.
+
+**Operator standard:** [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md) · **Series copy-paste blocks:** [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md)
 
 ---
 

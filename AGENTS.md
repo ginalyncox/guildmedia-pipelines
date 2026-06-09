@@ -4,7 +4,7 @@
 
 Python automation pipeline for Ganjier Guild Zoom replays: webhook → download → ffmpeg trim → YouTube upload → Canva thumbnail (optional) → WordPress replay post. All scripts live at the repo root (flat layout; docs sometimes reference a `zoom_pipeline/` subfolder that does not exist).
 
-**Operator instructions:** see [`WORKFLOW.md`](WORKFLOW.md) for the full runbook, including Canva thumbnail folder setup and per-meeting checklist.
+**Operator instructions:** see [`WORKFLOW.md`](WORKFLOW.md) for the full runbook. MEC standards: [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md). Copy-paste series blocks: [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md).
 
 ## Cursor Cloud specific instructions
 
@@ -38,6 +38,7 @@ pip install -r requirements.txt
 | Live webhook listener (port **5055**) | `python3 pipeline.py --webhook` |
 | Offline pipeline test | `python3 pipeline.py --file payload.json` |
 | Historical recording scan (preview) | `python3 backfill.py --dry-run` |
+| Yesterday-only test backfill | `python3 backfill.py --yesterday --dry-run` |
 | Historical recording scan (live) | `python3 backfill.py` |
 | Missed-webhook poller | `python3 poll_zoom.py` |
 | Canva folder / match test | `python3 canva_thumbnail.py --list-folder` / `--match "Topic"` |

@@ -202,7 +202,12 @@ def run_trim(input_path: str, output_path: str) -> str:
 # Step 2b – Intro
 # ---------------------------------------------------------------------------
 
-def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
+def run_intro(
+    trimmed_path: str,
+    meeting_title: str,
+    output_path: str,
+    meeting_date: datetime | None = None,
+) -> str:
     """
     Optionally prepend a branded YouTube intro to the trimmed replay.
 
@@ -224,6 +229,7 @@ def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
         trimmed_path=trimmed_path,
         meeting_title=meeting_title,
         output_path=output_path,
+        meeting_date=meeting_date,
     )
     upload_path = str(result_path)
 
@@ -398,7 +404,34 @@ def run_wp_post(
 
 
 # ---------------------------------------------------------------------------
-# Step 5 – Cleanup
+# Step 5b – Link MEC calendar event
+# ---------------------------------------------------------------------------
+
+def run_mec_link(
+    topic: str,
+    start_dt: datetime,
+    replay_url: str,
+    youtube_url: str,
+    replay_post_id: int,
+) -> dict | None:
+    """Match the recording to a Modern Events Calendar event and attach replay links."""
+    try:
+        from mec_events import link_recording_to_mec_event  # type: ignore
+    except ImportError as exc:
+        logger.warning("Could not import mec_events.py — skipping MEC link: %s", exc)
+        return None
+
+    return link_recording_to_mec_event(
+        topic=topic,
+        start_dt=start_dt,
+        replay_url=replay_url,
+        youtube_url=youtube_url,
+        replay_post_id=replay_post_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 6 – Cleanup
 # ---------------------------------------------------------------------------
 
 def cleanup_files(*paths: str) -> None:
@@ -535,7 +568,7 @@ def run_pipeline(payload: dict) -> None:
     logger.info("[2b/7] Preparing intro …")
     t0 = time.monotonic()
     try:
-        final_upload_path = run_intro(trimmed_path, topic, upload_path)
+        final_upload_path = run_intro(trimmed_path, topic, upload_path, start_dt)
     except Exception as exc:
         logger.error("[2b/7] Intro step failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "intro", exc)
@@ -593,6 +626,27 @@ def run_pipeline(payload: dict) -> None:
     logger.info("[5/7] WordPress post finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
+    # Step 5b – Link MEC calendar event
+    # ------------------------------------------------------------------
+    logger.info("[5b/7] Linking MEC calendar event …")
+    t0 = time.monotonic()
+    mec_result = run_mec_link(
+        topic,
+        start_dt,
+        wp_result.get("wp_post_url", ""),
+        wp_result.get("youtube_url", f"https://www.youtube.com/watch?v={video_id}"),
+        int(wp_result.get("wp_post_id", 0) or 0),
+    )
+    if mec_result:
+        logger.info(
+            "[5b/7] MEC event linked: %s",
+            mec_result.get("event_url") or mec_result.get("match", {}).get("url"),
+        )
+    else:
+        logger.info("[5b/7] No MEC calendar event linked")
+    logger.info("[5b/7] MEC link finished in %.1fs", time.monotonic() - t0)
+
+    # ------------------------------------------------------------------
     # Step 6 – Cleanup
     # ------------------------------------------------------------------
     logger.info("[6/7] Cleaning up temp files …")
@@ -611,6 +665,8 @@ def run_pipeline(payload: dict) -> None:
         zoom_account=account_label_from_payload(payload),
         youtube_url=wp_result.get("youtube_url", f"https://www.youtube.com/watch?v={video_id}"),
         wp_url=wp_result.get("wp_post_url", ""),
+        mec_event_url=(mec_result or {}).get("event_url")
+        or ((mec_result or {}).get("match") or {}).get("url", ""),
         recording_id=recording_id_from_payload(payload),
     )
 

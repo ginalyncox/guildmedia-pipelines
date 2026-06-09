@@ -44,6 +44,7 @@ class PipelineWiringTests(unittest.TestCase):
     )
     @patch("pipeline.run_canva_thumbnail", return_value=None)
     @patch("pipeline.run_youtube_upload", return_value="abc123")
+    @patch("pipeline.run_mec_link", return_value=None)
     @patch("pipeline.run_intro", return_value="/tmp/zoom_pipeline/test_trimmed.mp4")
     @patch("pipeline.run_trim", return_value="/tmp/zoom_pipeline/test_trimmed.mp4")
     @patch("pipeline.download_recording", return_value="/tmp/zoom_pipeline/test.mp4")
@@ -56,6 +57,7 @@ class PipelineWiringTests(unittest.TestCase):
         mock_download,
         mock_trim,
         mock_intro,
+        _mec,
         mock_upload,
         _canva,
         mock_wp,
