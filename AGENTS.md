@@ -41,6 +41,7 @@ pip install -r requirements.txt
 | Historical recording scan (live) | `python3 backfill.py` |
 | Missed-webhook poller | `python3 poll_zoom.py` |
 | Canva folder / match test | `python3 canva_thumbnail.py --list-folder` / `--match "Topic"` |
+| Intro preview | `python3 replay_intro.py build --title "Topic" -o /tmp/intro.mp4` |
 | Zoom credential check | `python3 zoom_verify.py` |
 | Sheets tracker test | `python3 replay_tracker.py --test` |
 

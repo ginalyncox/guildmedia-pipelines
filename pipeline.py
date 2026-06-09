@@ -199,6 +199,43 @@ def run_trim(input_path: str, output_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Step 2b – Intro
+# ---------------------------------------------------------------------------
+
+def run_intro(trimmed_path: str, meeting_title: str, output_path: str) -> str:
+    """
+    Optionally prepend a branded YouTube intro to the trimmed replay.
+
+    Controlled by REPLAY_INTRO_ENABLED in .env. When disabled, returns trimmed_path.
+    """
+    try:
+        from replay_intro import intro_enabled, prepare_upload_video  # type: ignore
+    except ImportError as exc:
+        raise ImportError(
+            "Could not import replay_intro.py. Make sure replay_intro.py is in the same directory."
+        ) from exc
+
+    if not intro_enabled():
+        logger.info("REPLAY_INTRO_ENABLED is false — skipping intro step.")
+        return trimmed_path
+
+    logger.info("Prepending replay intro for '%s'", meeting_title)
+    result_path = prepare_upload_video(
+        trimmed_path=trimmed_path,
+        meeting_title=meeting_title,
+        output_path=output_path,
+    )
+    upload_path = str(result_path)
+
+    if not os.path.exists(upload_path):
+        raise FileNotFoundError(f"Intro step did not produce expected output at {upload_path}")
+
+    size_mb = os.path.getsize(upload_path) / (1024 * 1024)
+    logger.info("Intro step complete (%.1f MB): %s", size_mb, upload_path)
+    return upload_path
+
+
+# ---------------------------------------------------------------------------
 # Step 3 – Upload to YouTube
 # ---------------------------------------------------------------------------
 
@@ -452,6 +489,7 @@ def run_pipeline(payload: dict) -> None:
     os.makedirs(TEMP_DIR, exist_ok=True)
     raw_path      = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}.mp4")
     trimmed_path  = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_trimmed.mp4")
+    upload_path   = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_upload.mp4")
 
     title       = build_title(topic, start_dt)
     description = build_description(topic, start_dt, duration)
@@ -466,64 +504,78 @@ def run_pipeline(payload: dict) -> None:
     # ------------------------------------------------------------------
     # Step 1 – Download
     # ------------------------------------------------------------------
-    logger.info("[1/5] Downloading recording …")
+    logger.info("[1/7] Downloading recording …")
     t0 = time.monotonic()
     try:
         download_recording(download_url, raw_path, account_id=account_id)
     except Exception as exc:
-        logger.error("[1/5] Download failed: %s", exc, exc_info=True)
+        logger.error("[1/7] Download failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "download", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[1/5] Download finished in %.1fs", time.monotonic() - t0)
+    logger.info("[1/7] Download finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 2 – Trim
     # ------------------------------------------------------------------
-    logger.info("[2/5] Trimming video …")
+    logger.info("[2/7] Trimming video …")
     t0 = time.monotonic()
     try:
         run_trim(raw_path, trimmed_path)
     except Exception as exc:
-        logger.error("[2/5] Trim failed: %s", exc, exc_info=True)
+        logger.error("[2/7] Trim failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "trim", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[2/5] Trim finished in %.1fs", time.monotonic() - t0)
+    logger.info("[2/7] Trim finished in %.1fs", time.monotonic() - t0)
+
+    # ------------------------------------------------------------------
+    # Step 2b – Intro
+    # ------------------------------------------------------------------
+    logger.info("[2b/7] Preparing intro …")
+    t0 = time.monotonic()
+    try:
+        final_upload_path = run_intro(trimmed_path, topic, upload_path)
+    except Exception as exc:
+        logger.error("[2b/7] Intro step failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "intro", exc)
+        logger.error("Preserving temp files for debugging. Exiting.")
+        sys.exit(1)
+    logger.info("[2b/7] Intro step finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 3 – Upload to YouTube
     # ------------------------------------------------------------------
-    logger.info("[3/6] Uploading to YouTube …")
+    logger.info("[3/7] Uploading to YouTube …")
     t0 = time.monotonic()
     try:
         video_id = run_youtube_upload(
-            trimmed_path,
+            final_upload_path,
             title,
             description,
             YOUTUBE_PLAYLIST_NAME,
         )
     except Exception as exc:
-        logger.error("[3/6] YouTube upload failed: %s", exc, exc_info=True)
+        logger.error("[3/7] YouTube upload failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "youtube", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[3/6] YouTube upload finished in %.1fs", time.monotonic() - t0)
+    logger.info("[3/7] YouTube upload finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 4b – Canva Thumbnail
     # ------------------------------------------------------------------
-    logger.info("[4/6] Fetching Canva thumbnail …")
+    logger.info("[4/7] Fetching Canva thumbnail …")
     canva_thumbnail_path = run_canva_thumbnail(topic, start_dt)
     if canva_thumbnail_path:
-        logger.info("[4/6] Canva thumbnail fetched: %s", canva_thumbnail_path)
+        logger.info("[4/7] Canva thumbnail fetched: %s", canva_thumbnail_path)
     else:
-        logger.info("[4/6] Canva thumbnail unavailable, using YouTube auto-thumbnail")
+        logger.info("[4/7] Canva thumbnail unavailable, using YouTube auto-thumbnail")
 
     # ------------------------------------------------------------------
     # Step 5 – Post to WordPress
     # ------------------------------------------------------------------
-    logger.info("[5/6] Creating WordPress replay post …")
+    logger.info("[5/7] Creating WordPress replay post …")
     t0 = time.monotonic()
     try:
         wp_result = run_wp_post(
@@ -534,19 +586,20 @@ def run_pipeline(payload: dict) -> None:
             local_thumbnail_path=canva_thumbnail_path,
         )
     except Exception as exc:
-        logger.error("[5/6] WordPress post failed: %s", exc, exc_info=True)
+        logger.error("[5/7] WordPress post failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "wordpress", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[5/6] WordPress post finished in %.1fs", time.monotonic() - t0)
+    logger.info("[5/7] WordPress post finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 6 – Cleanup
     # ------------------------------------------------------------------
-    logger.info("[6/6] Cleaning up temp files …")
+    logger.info("[6/7] Cleaning up temp files …")
     cleanup_files(
         raw_path,
         trimmed_path,
+        final_upload_path if final_upload_path != trimmed_path else None,
         canva_thumbnail_path if canva_thumbnail_path and canva_thumbnail_path.startswith(TEMP_DIR) else None,
     )
 

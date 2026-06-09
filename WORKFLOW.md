@@ -12,6 +12,7 @@ Zoom recording ends
   → webhook hits pipeline.py (port 5055, /zoom/webhook)
   → download MP4 from Zoom Cloud
   → trim pre/post-roll with ffmpeg
+  → prepend branded YouTube intro (optional)
   → upload to YouTube (unlisted, added to Replays playlist)
   → fetch Canva thumbnail (optional)
   → create WordPress replay post on ganjierguild.com
@@ -115,6 +116,51 @@ Cron example (every 30 minutes):
 
 ```cron
 */30 * * * * /usr/bin/python3 /path/to/poll_zoom.py >> /var/log/zoom-poll.log 2>&1
+```
+
+---
+
+## YouTube intro (optional)
+
+Each replay can open with a short branded intro before the meeting content.
+
+### Preview the default intro
+
+```bash
+python3 replay_intro.py build --title "Guild Monthly Webinar" --output /tmp/intro_preview.mp4
+```
+
+This generates a 5-second slate (dark green background, Ganjier Guild branding,
+meeting title) using ffmpeg — no Canva or video editor required.
+
+### Enable in the pipeline
+
+After you approve the look, set in `.env`:
+
+```env
+REPLAY_INTRO_ENABLED=true
+REPLAY_INTRO_DURATION=5
+REPLAY_INTRO_DYNAMIC_TITLE=true
+```
+
+`REPLAY_INTRO_DYNAMIC_TITLE=true` generates a fresh intro per meeting with the
+Zoom topic on screen. Set it to `false` to reuse a single static file.
+
+### Use a custom intro from Canva
+
+1. Export a 1920×1080 MP4 from Canva (5–8 seconds, with audio or silent).
+2. Save it as `assets/custom_intro.mp4` (or any path).
+3. Set:
+   ```env
+   REPLAY_INTRO_ENABLED=true
+   REPLAY_INTRO_PATH=assets/custom_intro.mp4
+   REPLAY_INTRO_DYNAMIC_TITLE=false
+   ```
+
+### Test on a trimmed file
+
+```bash
+python3 replay_intro.py prepend trimmed.mp4 --title "Meeting Topic" -o /tmp/with_intro.mp4
 ```
 
 ---

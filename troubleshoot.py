@@ -46,6 +46,7 @@ SCRIPTS = [
     "trim_video.py",
     "post_to_replay_library.py",
     "replay_tracker.py",
+    "replay_intro.py",
 ]
 
 SERVICES = [
