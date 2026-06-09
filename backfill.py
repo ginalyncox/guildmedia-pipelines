@@ -24,23 +24,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from processing_state import load_processed_keys, mark_processed, recording_key
-from zoom_auth import ZoomAuth, configured_accounts, verify_auth, zoom_api_get
+from zoom_auth import ZoomAuth, auth_status, configured_accounts, zoom_api_get
 
 # ---------------------------------------------------------------------------
 # Load environment variables from .env in the same directory as this script
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
 load_dotenv(SCRIPT_DIR / ".env")
-
-ZOOM_ACCOUNTS = [
-    {
-        "name": auth.name,
-        "account_id": auth.account_id,
-        "client_id": auth.client_id,
-        "client_secret": auth.client_secret,
-    }
-    for auth in configured_accounts()
-]
 
 BACKFILL_FROM_DATE   = os.getenv("BACKFILL_FROM_DATE", "2020-01-01")
 BACKFILL_DELAY_SEC   = float(os.getenv("BACKFILL_DELAY_SECONDS", "5"))
@@ -247,7 +237,7 @@ def build_pipeline_payload(recording: dict, account_id: str) -> dict:
 
 def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filter: str | None = None) -> None:
     """
-    Core backfill loop. Iterates over all configured ZOOM_ACCOUNTS (or a single
+    Core backfill loop. Iterates over all configured Zoom accounts (or a single
     account if account_filter is provided).
 
     Parameters
@@ -261,15 +251,15 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
     """
     start_time = time.monotonic()
 
-    # Determine which accounts to run
-    accounts_to_run = ZOOM_ACCOUNTS
+    # Determine which accounts to run (preserves per-account ACCESS_TOKEN fallbacks)
+    accounts_to_run = configured_accounts()
     if account_filter:
-        accounts_to_run = [a for a in ZOOM_ACCOUNTS if a["name"] == account_filter]
+        accounts_to_run = [auth for auth in accounts_to_run if auth.name == account_filter]
         if not accounts_to_run:
             logger.error(
                 "--account '%s' not found or missing credentials. Available: %s",
                 account_filter,
-                [a["name"] for a in ZOOM_ACCOUNTS],
+                [auth.name for auth in configured_accounts()],
             )
             sys.exit(1)
 
@@ -298,21 +288,10 @@ def run_backfill(dry_run: bool = False, retry_failed: bool = False, account_filt
             logger.error("Could not import run_pipeline from pipeline.py: %s", exc)
             sys.exit(1)
 
-    for acct in accounts_to_run:
-        auth = ZoomAuth(
-            name=acct["name"],
-            account_id=acct["account_id"],
-            client_id=acct["client_id"],
-            client_secret=acct["client_secret"],
-        )
-
-        if not verify_auth(auth):
-            logger.error(
-                "[%s] Zoom OAuth failed — skipping account. "
-                "Check ZOOM_%s_* values in .env.",
-                auth.name,
-                auth.name.upper(),
-            )
+    for auth in accounts_to_run:
+        ok, message = auth_status(auth)
+        if not ok:
+            logger.error("[%s] Zoom OAuth failed — skipping account. %s", auth.name, message)
             continue
 
         # Fetch + filter for this account

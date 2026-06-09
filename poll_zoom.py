@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from backfill import build_pipeline_payload, filter_recordings
 from processing_state import load_processed_keys, mark_processed, recording_key
-from zoom_auth import ZoomAuth, configured_accounts, verify_auth, zoom_api_get
+from zoom_auth import ZoomAuth, auth_status, configured_accounts, zoom_api_get
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 load_dotenv(SCRIPT_DIR / ".env")
@@ -80,8 +80,9 @@ def main() -> None:
     new_count = 0
 
     for auth in accounts:
-        if not verify_auth(auth):
-            logger.error("[%s] Zoom OAuth failed — skipping account.", auth.name)
+        ok, message = auth_status(auth)
+        if not ok:
+            logger.error("[%s] Zoom OAuth failed — skipping account. %s", auth.name, message)
             continue
 
         logger.info("[%s] Polling recordings from the last %d hours …", auth.name, LOOKBACK_HOURS)
