@@ -54,6 +54,7 @@ def post_to_replay_library(
     wp_app_password: str,
     cpt_endpoint: Optional[str] = None,
     topic_taxonomy: Optional[str] = None,
+    local_thumbnail_path: Optional[str] = None,
 ) -> dict:
     """
     Create a CPT post in the WordPress replay library.
@@ -121,11 +122,17 @@ def post_to_replay_library(
     content = f"{iframe}\n\n{description}"
 
     # -----------------------------------------------------------------------
-    # 2. Upload YouTube thumbnail as featured image
+    # 2. Upload featured image (local PNG preferred, else YouTube thumbnail)
     # -----------------------------------------------------------------------
-    featured_media_id = _upload_youtube_thumbnail(
-        base_url, headers, youtube_video_id, title
-    )
+    featured_media_id = None
+    if local_thumbnail_path and os.path.isfile(local_thumbnail_path):
+        featured_media_id = _upload_local_thumbnail(
+            base_url, headers, local_thumbnail_path, title
+        )
+    if not featured_media_id:
+        featured_media_id = _upload_youtube_thumbnail(
+            base_url, headers, youtube_video_id, title
+        )
 
     # -----------------------------------------------------------------------
     # 3. Resolve topic term IDs
@@ -171,6 +178,105 @@ def post_to_replay_library(
         "youtube_url": youtube_url,
         "title": title,
     }
+
+
+# ---------------------------------------------------------------------------
+# Pipeline wrapper
+# ---------------------------------------------------------------------------
+
+def create_replay_post(
+    video_id: str,
+    title: str,
+    description: str,
+    date: datetime.datetime,
+    cpt_endpoint: Optional[str] = None,
+    local_thumbnail_path: Optional[str] = None,
+) -> dict:
+    """
+    Convenience wrapper used by pipeline.py.
+
+    Reads WordPress credentials from the environment and posts a replay entry.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(script_dir, ".env"))
+
+    wp_base_url = os.getenv("WP_BASE_URL", "")
+    wp_user = os.getenv("WP_USER", "")
+    wp_app_password = os.getenv("WP_APP_PASSWORD", "")
+    endpoint = cpt_endpoint or f"/wp-json/wp/v2/{os.getenv('WP_REPLAY_CPT', 'gc_replay')}"
+
+    if not all([wp_base_url, wp_user, wp_app_password]):
+        raise RuntimeError(
+            "WP_BASE_URL, WP_USER, and WP_APP_PASSWORD must be set in .env"
+        )
+
+    return post_to_replay_library(
+        youtube_video_id=video_id,
+        title=title,
+        description=description,
+        meeting_date=date,
+        topics=[],
+        wp_base_url=wp_base_url,
+        wp_user=wp_user,
+        wp_app_password=wp_app_password,
+        cpt_endpoint=endpoint,
+        local_thumbnail_path=local_thumbnail_path,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helper: Upload local thumbnail to WP media library
+# ---------------------------------------------------------------------------
+
+def _upload_local_thumbnail(
+    base_url: str,
+    auth_headers: dict,
+    image_path: str,
+    post_title: str,
+) -> Optional[int]:
+    """Upload a local PNG/JPG file as the featured image."""
+    mime_type, _ = mimetypes.guess_type(image_path)
+    if not mime_type:
+        mime_type = "image/png"
+
+    filename = os.path.basename(image_path)
+    upload_headers = {
+        "Authorization": auth_headers["Authorization"],
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": mime_type,
+    }
+
+    media_endpoint = f"{base_url}/wp-json/wp/v2/media"
+    with open(image_path, "rb") as fh:
+        upload_response = requests.post(
+            media_endpoint,
+            headers=upload_headers,
+            data=fh.read(),
+            timeout=30,
+        )
+
+    if not upload_response.ok:
+        print(
+            f"[WARN] Local thumbnail upload failed — HTTP {upload_response.status_code}: "
+            f"{upload_response.text}",
+            file=sys.stderr,
+        )
+        return None
+
+    media_id = upload_response.json().get("id")
+    print(f"[OK] Uploaded local thumbnail as media ID={media_id}")
+
+    if media_id:
+        patch_headers = dict(upload_headers)
+        patch_headers["Content-Type"] = "application/json"
+        requests.patch(
+            f"{media_endpoint}/{media_id}",
+            headers=patch_headers,
+            json={"alt_text": post_title},
+            timeout=15,
+        )
+
+    return media_id
 
 
 # ---------------------------------------------------------------------------

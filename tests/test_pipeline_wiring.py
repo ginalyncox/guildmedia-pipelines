@@ -1,0 +1,68 @@
+"""Smoke tests for pipeline module wiring (no external API calls)."""
+
+import datetime
+import unittest
+from unittest.mock import MagicMock, patch
+
+from pipeline import build_title, run_pipeline
+
+
+SAMPLE_PAYLOAD = {
+    "event": "recording.completed",
+    "payload": {
+        "account_id": "acct-123",
+        "object": {
+            "topic": "Guild Monthly Webinar",
+            "start_time": "2025-05-10T18:00:00Z",
+            "duration": 60,
+            "recording_files": [
+                {
+                    "file_type": "MP4",
+                    "status": "completed",
+                    "download_url": "https://example.com/recording.mp4",
+                }
+            ],
+        },
+    },
+}
+
+
+class PipelineWiringTests(unittest.TestCase):
+    def test_build_title(self):
+        title = build_title("Guild Session", datetime.datetime(2025, 5, 10, tzinfo=datetime.timezone.utc))
+        self.assertIn("Guild Session", title)
+        self.assertIn("2025", title)
+
+    @patch("pipeline.cleanup_files")
+    @patch("pipeline.run_wp_post")
+    @patch("pipeline.run_canva_thumbnail", return_value=None)
+    @patch("pipeline.run_youtube_upload", return_value="abc123")
+    @patch("pipeline.run_trim", return_value="/tmp/zoom_pipeline/test_trimmed.mp4")
+    @patch("pipeline.download_recording", return_value="/tmp/zoom_pipeline/test.mp4")
+    @patch("pipeline.os.path.getsize", return_value=1024 * 1024)
+    @patch("pipeline.os.path.exists", return_value=True)
+    def test_run_pipeline_calls_all_steps(
+        self,
+        _exists,
+        _size,
+        mock_download,
+        mock_trim,
+        mock_upload,
+        _canva,
+        mock_wp,
+        _cleanup,
+    ):
+        run_pipeline(SAMPLE_PAYLOAD)
+
+        mock_download.assert_called_once_with(
+            "https://example.com/recording.mp4",
+            "/tmp/zoom_pipeline/zoom_20250510_Guild_Monthly_Webinar.mp4",
+            account_id="acct-123",
+        )
+        mock_trim.assert_called_once()
+        mock_upload.assert_called_once()
+        mock_wp.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,7 @@
 # Credentials — never commit these
 .env
 .env.*
+!.env.example
 token.json
 canva_token.json
 client_secrets.json

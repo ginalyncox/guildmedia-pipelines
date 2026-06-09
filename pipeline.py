@@ -13,14 +13,15 @@ Environment variables (subset — see SETUP.md for full list):
 
 | Variable                    | Required | Description                                        |
 |-----------------------------|----------|----------------------------------------------------||
-| ZOOM_ACCESS_TOKEN           | *        | Bearer token for Zoom download (or use S2S OAuth)  |
-| ZOOM_WEBHOOK_SECRET_TOKEN   | yes      | HMAC secret for validating Zoom webhook requests   |
+| ZOOM_JWARD_* / ZOOM_NAVIGATORS_* | yes | Server-to-Server OAuth credentials per Zoom account |
+| ZOOM_JWARD_WEBHOOK_SECRET   | yes*     | HMAC secret for jward webhook validation           |
+| ZOOM_NAVIGATORS_WEBHOOK_SECRET | yes*  | HMAC secret for navigators webhook validation      |
 | YOUTUBE_PLAYLIST_NAME       | yes      | Target YouTube playlist name                       |
 | WP_BASE_URL                 | yes      | WordPress site base URL (no trailing slash)        |
 | WP_USER                     | yes      | WordPress username                                 |
 | WP_APP_PASSWORD             | yes      | WordPress Application Password                     |
 | TEMP_DIR                    | no       | Temp directory for pipeline files (default /tmp/…) |
-| CANVA_API_KEY               | no       | Canva API key — omit to skip thumbnail step        |
+| CANVA_CLIENT_ID             | no       | Canva OAuth client ID — omit to skip thumbnail step|
 | CANVA_THUMBNAIL_FOLDER_ID   | no       | Canva folder ID containing thumbnail designs       |
 | WP_REPLAY_CPT               | no       | WordPress CPT slug (default: gc_replay, production: replay) |
 """
@@ -33,7 +34,7 @@ import logging
 import os
 import re
 import sys
-import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
@@ -42,12 +43,13 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from zoom_auth import download_recording as zoom_download_recording
+
 # ---------------------------------------------------------------------------
 # Load environment variables
 # ---------------------------------------------------------------------------
 load_dotenv()
 
-ZOOM_ACCESS_TOKEN           = os.getenv("ZOOM_ACCESS_TOKEN", "")
 ZOOM_WEBHOOK_SECRET_JWARD   = os.getenv("ZOOM_JWARD_WEBHOOK_SECRET", "")
 ZOOM_WEBHOOK_SECRET_NAV     = os.getenv("ZOOM_NAVIGATORS_WEBHOOK_SECRET", "")
 YOUTUBE_PLAYLIST_NAME   = os.getenv("YOUTUBE_PLAYLIST_NAME", "Replays")
@@ -55,7 +57,7 @@ WP_BASE_URL             = os.getenv("WP_BASE_URL", "")
 WP_USER                 = os.getenv("WP_USER", "")
 WP_APP_PASSWORD         = os.getenv("WP_APP_PASSWORD", "")
 TEMP_DIR                = os.getenv("TEMP_DIR", "/tmp/zoom_pipeline")
-CANVA_API_KEY           = os.getenv("CANVA_API_KEY", "")
+CANVA_CLIENT_ID         = os.getenv("CANVA_CLIENT_ID", "")
 CANVA_THUMBNAIL_FOLDER_ID = os.getenv("CANVA_THUMBNAIL_FOLDER_ID", "")
 WP_REPLAY_CPT           = os.getenv("WP_REPLAY_CPT", "gc_replay")
 
@@ -124,43 +126,15 @@ def build_title(topic: str, date: datetime) -> str:
 # Step 1 – Download
 # ---------------------------------------------------------------------------
 
-def download_recording(download_url: str, dest_path: str) -> str:
+def download_recording(download_url: str, dest_path: str, account_id: str | None = None) -> str:
     """
-    Download the MP4 from Zoom using the ZOOM_ACCESS_TOKEN bearer token.
-
-    Parameters
-    ----------
-    download_url : str
-        The download_url from the Zoom payload.
-    dest_path : str
-        Full path where the file should be saved.
-
-    Returns
-    -------
-    str
-        The path to the downloaded file (same as dest_path).
-
-    Raises
-    ------
-    RuntimeError
-        If the download fails or the response is not 200.
+    Download the MP4 from Zoom using Server-to-Server OAuth credentials.
     """
     logger.info("Downloading Zoom recording from %s → %s", download_url, dest_path)
-
-    headers = {"Authorization": f"Bearer {ZOOM_ACCESS_TOKEN}"}
-    with requests.get(download_url, headers=headers, stream=True, timeout=300) as resp:
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Download failed: HTTP {resp.status_code} — {resp.text[:200]}"
-            )
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        with open(dest_path, "wb") as fh:
-            for chunk in resp.iter_content(chunk_size=8192):
-                fh.write(chunk)
-
-    size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-    logger.info("Download complete (%.1f MB): %s", size_mb, dest_path)
-    return dest_path
+    result = zoom_download_recording(download_url, dest_path, account_id=account_id)
+    size_mb = os.path.getsize(result) / (1024 * 1024)
+    logger.info("Download complete (%.1f MB): %s", size_mb, result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -187,16 +161,15 @@ def run_trim(input_path: str, output_path: str) -> str:
 
     # Lazy import so the orchestrator can be imported even if trim_video is missing
     try:
-        from trim_video import trim_recording  # type: ignore
+        from trim_video import trim_video  # type: ignore
     except ImportError as exc:
         raise ImportError(
-            "Could not import trim_recording from trim_video.py. "
+            "Could not import trim_video from trim_video.py. "
             "Make sure trim_video.py is in the same directory."
         ) from exc
 
-    result = trim_recording(input_path, output_path)
-    # trim_recording is expected to return the output path; fall back gracefully
-    trimmed_path = result if isinstance(result, str) else output_path
+    result = trim_video(input_path, output_path)
+    trimmed_path = result["output_path"] if isinstance(result, dict) else output_path
 
     if not os.path.exists(trimmed_path):
         raise FileNotFoundError(
@@ -240,21 +213,28 @@ def run_youtube_upload(
     logger.info("Uploading to YouTube: '%s'", title)
 
     try:
-        from upload_youtube import upload_video  # type: ignore
+        from upload_youtube import (  # type: ignore
+            get_authenticated_service,
+            get_or_create_playlist,
+            upload_video,
+        )
     except ImportError as exc:
         raise ImportError(
-            "Could not import upload_video from upload_youtube.py. "
+            "Could not import upload helpers from upload_youtube.py. "
             "Make sure upload_youtube.py is in the same directory."
         ) from exc
 
-    video_id = upload_video(
-        file_path=trimmed_path,
+    youtube = get_authenticated_service()
+    playlist_id = get_or_create_playlist(youtube, playlist_name)
+    result = upload_video(
+        video_path=trimmed_path,
         title=title,
         description=description,
-        privacy="unlisted",
-        playlist_name=playlist_name,
+        tags=[],
+        playlist_id=playlist_id,
     )
 
+    video_id = result.get("video_id") if isinstance(result, dict) else result
     if not video_id:
         raise RuntimeError("upload_video() returned an empty video ID.")
 
@@ -283,8 +263,8 @@ def run_canva_thumbnail(meeting_title: str, meeting_date: datetime) -> str | Non
         Absolute path to the downloaded PNG, or None if Canva is not configured
         or no matching design was found.
     """
-    if not CANVA_API_KEY:
-        logger.info("CANVA_API_KEY not set — skipping Canva thumbnail step.")
+    if not CANVA_CLIENT_ID:
+        logger.info("CANVA_CLIENT_ID not set — skipping Canva thumbnail step.")
         return None
 
     try:
@@ -425,6 +405,7 @@ def run_pipeline(payload: dict) -> None:
         sys.exit(1)
 
     download_url  = mp4_file["download_url"]
+    account_id    = payload.get("payload", {}).get("account_id")
     start_dt      = _parse_start_time(start_time_s)
     date_tag      = start_dt.strftime("%Y%m%d")
     clean_topic   = _clean_filename(topic)
@@ -449,7 +430,7 @@ def run_pipeline(payload: dict) -> None:
     logger.info("[1/5] Downloading recording …")
     t0 = time.monotonic()
     try:
-        download_recording(download_url, raw_path)
+        download_recording(download_url, raw_path, account_id=account_id)
     except Exception as exc:
         logger.error("[1/5] Download failed: %s", exc, exc_info=True)
         logger.error("Preserving temp files for debugging. Exiting.")
@@ -617,12 +598,17 @@ def run_webhook_server() -> None:
 
         if event_type == "recording.completed":
             logger.info("Triggering pipeline for recording.completed event.")
-            # Run in the same process; for production, consider a background thread/queue
-            try:
-                run_pipeline(payload)
-            except SystemExit as exc:
-                return jsonify({"error": "pipeline failed", "code": exc.code}), 500
-            return jsonify({"status": "ok"}), 200
+            # Respond immediately so Zoom does not time out; process in background.
+            def _run_pipeline_safe() -> None:
+                try:
+                    run_pipeline(payload)
+                except SystemExit as exc:
+                    logger.error("Pipeline exited with code %s", exc.code)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Pipeline failed: %s", exc, exc_info=True)
+
+            threading.Thread(target=_run_pipeline_safe, daemon=True).start()
+            return jsonify({"status": "accepted"}), 200
 
         # Acknowledge but ignore other event types
         return jsonify({"status": "ignored", "event": event_type}), 200
