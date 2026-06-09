@@ -31,6 +31,9 @@ POST /wp-json/gg/v1/mec-events/{id}/link-replay
 
 Linked events display a **Replay available** box on the public event page.
 
+Event title and description standards for reliable matching:
+[`MEC_EVENT_STANDARD.md`](../../MEC_EVENT_STANDARD.md) in the repo root.
+
 ## API
 
 The Python pipeline logs runs with the same Application Password already used for replay posts:
