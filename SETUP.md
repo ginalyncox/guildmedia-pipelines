@@ -237,55 +237,51 @@ LOG_LEVEL=INFO
 
 ## 5. Canva Thumbnail Setup
 
-Canva thumbnails are **optional**. If `CANVA_API_KEY` is not set, the pipeline
-silently falls back to YouTube auto-generated thumbnails.
+Canva thumbnails are **optional**. If Canva is not configured or no design
+matches, the pipeline falls back to YouTube auto-generated thumbnails.
 
-### 5a. Create a Canva API integration
+See [`WORKFLOW.md`](WORKFLOW.md) for the full operator runbook (folder naming,
+per-meeting checklist, and title-matching rules).
 
-1. Go to [canva.com/developers](https://www.canva.com/developers/) → **Create an integration** → pick **Connect API**.
-2. Grant the following scopes:
-   - `folder:read`
-   - `design:content:read`
-   - `design:meta:read`
-3. Copy the generated API key.
-4. Add to `.env`:
+### 5a. Create a Canva Connect API integration
+
+1. Go to [canva.com/developers](https://www.canva.com/developers/) → **Create an integration** → **Connect API**.
+2. Grant scopes: `folder:read`, `design:content:read`, `design:meta:read`.
+3. Add credentials to `.env`:
    ```
-   CANVA_API_KEY=your_canva_api_key
+   CANVA_CLIENT_ID=your_client_id
+   CANVA_CLIENT_SECRET=your_client_secret
+   CANVA_REDIRECT_URI=http://127.0.0.1:8080/canva/callback
    ```
 
-### 5b. Find your thumbnail folder ID
+### 5b. Authenticate and configure the thumbnail folder
 
 ```bash
-python canva_thumbnail.py --list-folders
+python3 canva_thumbnail.py --auth
+python3 canva_thumbnail.py --list-folders
 ```
 
-This prints all folders visible to your integration. Copy the folder ID that
-contains your meeting thumbnail designs and add it to `.env`:
+Set the replay thumbnail folder by name (preferred):
+
+```
+CANVA_THUMBNAIL_FOLDER_NAME=Replay Thumbnail Folder
+```
+
+Optional ID fallback:
 
 ```
 CANVA_THUMBNAIL_FOLDER_ID=your_folder_id
 ```
 
-### 5c. Verify designs are visible
+### 5c. Verify designs and title matching
 
 ```bash
-python canva_thumbnail.py --list-folder
+python3 canva_thumbnail.py --list-folder
+python3 canva_thumbnail.py --match "Your Meeting Title"
 ```
 
-Confirm that the designs you expect to use as thumbnails appear in the output.
-
-### 5d. Test title matching
-
-```bash
-python canva_thumbnail.py --match "Your Meeting Title"
-```
-
-This performs the same fuzzy-match logic that `pipeline.py` uses at runtime.
-A matching design name and a local PNG path will be printed on success.
-
-> **Note:** If `CANVA_API_KEY` is not set in `.env`, the pipeline silently
-> falls back to YouTube auto-thumbnails — no errors are raised and no action
-> is required.
+Design titles in **Replay Thumbnail Folder** must contain the Zoom meeting
+topic (case-insensitive substring match).
 
 ---
 
