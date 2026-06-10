@@ -227,11 +227,16 @@ def find_phrase_start_sec(
         if needle in text.lower():
             return start_sec
 
-    # Phrase may span adjacent cues (e.g. "having a" / "good session").
-    for idx in range(len(cues) - 1):
-        combined = f"{cues[idx][1]} {cues[idx + 1][1]}"
-        if needle in combined.lower():
-            return cues[idx][0]
+    # Phrase may span multiple adjacent cues (e.g. one word per VTT cue).
+    max_window = max(2, len(needle.split()))
+    for idx in range(len(cues)):
+        combined_parts: list[str] = []
+        for window_end in range(idx, min(len(cues), idx + max_window)):
+            combined_parts.append(cues[window_end][1])
+            if window_end == idx:
+                continue
+            if needle in " ".join(combined_parts).lower():
+                return cues[idx][0]
 
     return None
 
@@ -321,7 +326,7 @@ def trim_video(
         end_sec      — detected (or default) trim end in seconds
         duration_sec — duration of the output clip
         output_path  — path to the written output file
-        start_method — "transcript" or "silence"
+        start_method — "transcript", "silence", or "full"
     """
     # ── validate inputs ───────────────────────────────────────────────────────
     _require_ffmpeg()
@@ -398,6 +403,7 @@ def trim_video(
         )
         start_sec = 0.0
         end_sec = total_duration
+        start_method = "full"
 
     clip_duration = end_sec - start_sec
     print(f"\nTrim range : {start_sec:.2f}s → {end_sec:.2f}s  ({clip_duration:.2f}s / {clip_duration/60:.1f} min)")

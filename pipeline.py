@@ -74,6 +74,12 @@ TEMP_DIR                = os.getenv("TEMP_DIR", "/tmp/zoom_pipeline")
 CANVA_CLIENT_ID         = os.getenv("CANVA_CLIENT_ID", "")
 CANVA_THUMBNAIL_FOLDER_ID = os.getenv("CANVA_THUMBNAIL_FOLDER_ID", "")
 WP_REPLAY_CPT           = os.getenv("WP_REPLAY_CPT", "gc_replay")
+TRIM_USE_TRANSCRIPT     = os.getenv("TRIM_USE_TRANSCRIPT", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -548,7 +554,7 @@ def run_pipeline(payload: dict) -> None:
     raw_path      = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}.mp4")
     trimmed_path  = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_trimmed.mp4")
     transcript_path: str | None = None
-    transcript_file = find_transcript_file(rec_files)
+    transcript_file = find_transcript_file(rec_files) if TRIM_USE_TRANSCRIPT else None
     upload_path   = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_upload.mp4")
 
     title       = build_title(topic, start_dt)
@@ -590,8 +596,10 @@ def run_pipeline(payload: dict) -> None:
                 exc,
             )
             transcript_path = None
-    else:
+    elif TRIM_USE_TRANSCRIPT:
         logger.info("[1/7] No transcript file in recording payload — silence-based trim start.")
+    else:
+        logger.info("[1/7] Transcript trim disabled by TRIM_USE_TRANSCRIPT — silence-based trim start.")
 
     # ------------------------------------------------------------------
     # Step 2 – Trim
