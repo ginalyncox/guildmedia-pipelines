@@ -25,6 +25,8 @@ Environment variables (subset — see SETUP.md for full list):
 | CANVA_THUMBNAIL_FOLDER_NAME | no       | Canva folder name (default: Replay Thumbnail Folder)|
 | CANVA_THUMBNAIL_FOLDER_ID   | no       | Optional folder ID fallback if name lookup fails   |
 | WP_REPLAY_CPT               | no       | WordPress CPT slug (default: gc_replay, production: replay) |
+| GOOGLE_SHEETS_SPREADSHEET_ID | no      | Replay Library Tracker sheet ID (optional logging) |
+| GOOGLE_SERVICE_ACCOUNT_JSON | no       | Service account JSON for Sheets API (share sheet with SA email) |
 """
 
 import argparse
@@ -48,6 +50,12 @@ from processing_state import (
     load_processed_keys,
     mark_processed,
     recording_key_from_payload,
+)
+from replay_tracker import (
+    account_label_from_payload,
+    is_configured as tracker_configured,
+    log_pipeline_result,
+    recording_id_from_payload,
 )
 from zoom_auth import download_recording as zoom_download_recording
 
@@ -191,6 +199,49 @@ def run_trim(input_path: str, output_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Step 2b – Intro
+# ---------------------------------------------------------------------------
+
+def run_intro(
+    trimmed_path: str,
+    meeting_title: str,
+    output_path: str,
+    meeting_date: datetime | None = None,
+) -> str:
+    """
+    Optionally prepend a branded YouTube intro to the trimmed replay.
+
+    Controlled by REPLAY_INTRO_ENABLED in .env. When disabled, returns trimmed_path.
+    """
+    try:
+        from replay_intro import intro_enabled, prepare_upload_video  # type: ignore
+    except ImportError as exc:
+        raise ImportError(
+            "Could not import replay_intro.py. Make sure replay_intro.py is in the same directory."
+        ) from exc
+
+    if not intro_enabled():
+        logger.info("REPLAY_INTRO_ENABLED is false — skipping intro step.")
+        return trimmed_path
+
+    logger.info("Prepending replay intro for '%s'", meeting_title)
+    result_path = prepare_upload_video(
+        trimmed_path=trimmed_path,
+        meeting_title=meeting_title,
+        output_path=output_path,
+        meeting_date=meeting_date,
+    )
+    upload_path = str(result_path)
+
+    if not os.path.exists(upload_path):
+        raise FileNotFoundError(f"Intro step did not produce expected output at {upload_path}")
+
+    size_mb = os.path.getsize(upload_path) / (1024 * 1024)
+    logger.info("Intro step complete (%.1f MB): %s", size_mb, upload_path)
+    return upload_path
+
+
+# ---------------------------------------------------------------------------
 # Step 3 – Upload to YouTube
 # ---------------------------------------------------------------------------
 
@@ -307,7 +358,7 @@ def run_wp_post(
     description: str,
     date: datetime,
     local_thumbnail_path: str | None = None,
-) -> None:
+) -> dict:
     """
     Call create_replay_post() from post_to_replay_library.py.
 
@@ -346,13 +397,41 @@ def run_wp_post(
     if local_thumbnail_path is not None:
         kwargs["local_thumbnail_path"] = local_thumbnail_path
 
-    create_replay_post(**kwargs)
+    result = create_replay_post(**kwargs)
 
     logger.info("WordPress post created successfully.")
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Step 5 – Cleanup
+# Step 5b – Link MEC calendar event
+# ---------------------------------------------------------------------------
+
+def run_mec_link(
+    topic: str,
+    start_dt: datetime,
+    replay_url: str,
+    youtube_url: str,
+    replay_post_id: int,
+) -> dict | None:
+    """Match the recording to a Modern Events Calendar event and attach replay links."""
+    try:
+        from mec_events import link_recording_to_mec_event  # type: ignore
+    except ImportError as exc:
+        logger.warning("Could not import mec_events.py — skipping MEC link: %s", exc)
+        return None
+
+    return link_recording_to_mec_event(
+        topic=topic,
+        start_dt=start_dt,
+        replay_url=replay_url,
+        youtube_url=youtube_url,
+        replay_post_id=replay_post_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 6 – Cleanup
 # ---------------------------------------------------------------------------
 
 def cleanup_files(*paths: str) -> None:
@@ -369,6 +448,27 @@ def cleanup_files(*paths: str) -> None:
 # ---------------------------------------------------------------------------
 # Core pipeline
 # ---------------------------------------------------------------------------
+
+def _log_tracker_failure(
+    payload: dict,
+    topic: str,
+    start_dt: datetime,
+    duration: int,
+    step: str,
+    exc: Exception,
+) -> None:
+    if not tracker_configured():
+        return
+    log_pipeline_result(
+        topic=topic,
+        recording_date=start_dt,
+        duration_minutes=duration,
+        status=f"failed ({step})",
+        zoom_account=account_label_from_payload(payload),
+        error=str(exc),
+        recording_id=recording_id_from_payload(payload),
+    )
+
 
 def run_pipeline(payload: dict) -> None:
     """
@@ -422,6 +522,7 @@ def run_pipeline(payload: dict) -> None:
     os.makedirs(TEMP_DIR, exist_ok=True)
     raw_path      = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}.mp4")
     trimmed_path  = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_trimmed.mp4")
+    upload_path   = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_upload.mp4")
 
     title       = build_title(topic, start_dt)
     description = build_description(topic, start_dt, duration)
@@ -436,79 +537,137 @@ def run_pipeline(payload: dict) -> None:
     # ------------------------------------------------------------------
     # Step 1 – Download
     # ------------------------------------------------------------------
-    logger.info("[1/5] Downloading recording …")
+    logger.info("[1/7] Downloading recording …")
     t0 = time.monotonic()
     try:
         download_recording(download_url, raw_path, account_id=account_id)
     except Exception as exc:
-        logger.error("[1/5] Download failed: %s", exc, exc_info=True)
+        logger.error("[1/7] Download failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "download", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[1/5] Download finished in %.1fs", time.monotonic() - t0)
+    logger.info("[1/7] Download finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 2 – Trim
     # ------------------------------------------------------------------
-    logger.info("[2/5] Trimming video …")
+    logger.info("[2/7] Trimming video …")
     t0 = time.monotonic()
     try:
         run_trim(raw_path, trimmed_path)
     except Exception as exc:
-        logger.error("[2/5] Trim failed: %s", exc, exc_info=True)
+        logger.error("[2/7] Trim failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "trim", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[2/5] Trim finished in %.1fs", time.monotonic() - t0)
+    logger.info("[2/7] Trim finished in %.1fs", time.monotonic() - t0)
+
+    # ------------------------------------------------------------------
+    # Step 2b – Intro
+    # ------------------------------------------------------------------
+    logger.info("[2b/7] Preparing intro …")
+    t0 = time.monotonic()
+    try:
+        final_upload_path = run_intro(trimmed_path, topic, upload_path, start_dt)
+    except Exception as exc:
+        logger.error("[2b/7] Intro step failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "intro", exc)
+        logger.error("Preserving temp files for debugging. Exiting.")
+        sys.exit(1)
+    logger.info("[2b/7] Intro step finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 3 – Upload to YouTube
     # ------------------------------------------------------------------
-    logger.info("[3/6] Uploading to YouTube …")
+    logger.info("[3/7] Uploading to YouTube …")
     t0 = time.monotonic()
     try:
         video_id = run_youtube_upload(
-            trimmed_path,
+            final_upload_path,
             title,
             description,
             YOUTUBE_PLAYLIST_NAME,
         )
     except Exception as exc:
-        logger.error("[3/6] YouTube upload failed: %s", exc, exc_info=True)
+        logger.error("[3/7] YouTube upload failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "youtube", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[3/6] YouTube upload finished in %.1fs", time.monotonic() - t0)
+    logger.info("[3/7] YouTube upload finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 4b – Canva Thumbnail
     # ------------------------------------------------------------------
-    logger.info("[4/6] Fetching Canva thumbnail …")
+    logger.info("[4/7] Fetching Canva thumbnail …")
     canva_thumbnail_path = run_canva_thumbnail(topic, start_dt)
     if canva_thumbnail_path:
-        logger.info("[4/6] Canva thumbnail fetched: %s", canva_thumbnail_path)
+        logger.info("[4/7] Canva thumbnail fetched: %s", canva_thumbnail_path)
     else:
-        logger.info("[4/6] Canva thumbnail unavailable, using YouTube auto-thumbnail")
+        logger.info("[4/7] Canva thumbnail unavailable, using YouTube auto-thumbnail")
 
     # ------------------------------------------------------------------
     # Step 5 – Post to WordPress
     # ------------------------------------------------------------------
-    logger.info("[5/6] Creating WordPress replay post …")
+    logger.info("[5/7] Creating WordPress replay post …")
     t0 = time.monotonic()
     try:
-        run_wp_post(video_id, title, description, start_dt,
-                    local_thumbnail_path=canva_thumbnail_path)
+        wp_result = run_wp_post(
+            video_id,
+            title,
+            description,
+            start_dt,
+            local_thumbnail_path=canva_thumbnail_path,
+        )
     except Exception as exc:
-        logger.error("[5/6] WordPress post failed: %s", exc, exc_info=True)
+        logger.error("[5/7] WordPress post failed: %s", exc, exc_info=True)
+        _log_tracker_failure(payload, topic, start_dt, duration, "wordpress", exc)
         logger.error("Preserving temp files for debugging. Exiting.")
         sys.exit(1)
-    logger.info("[5/6] WordPress post finished in %.1fs", time.monotonic() - t0)
+    logger.info("[5/7] WordPress post finished in %.1fs", time.monotonic() - t0)
+
+    # ------------------------------------------------------------------
+    # Step 5b – Link MEC calendar event
+    # ------------------------------------------------------------------
+    logger.info("[5b/7] Linking MEC calendar event …")
+    t0 = time.monotonic()
+    mec_result = run_mec_link(
+        topic,
+        start_dt,
+        wp_result.get("wp_post_url", ""),
+        wp_result.get("youtube_url", f"https://www.youtube.com/watch?v={video_id}"),
+        int(wp_result.get("wp_post_id", 0) or 0),
+    )
+    if mec_result:
+        logger.info(
+            "[5b/7] MEC event linked: %s",
+            mec_result.get("event_url") or mec_result.get("match", {}).get("url"),
+        )
+    else:
+        logger.info("[5b/7] No MEC calendar event linked")
+    logger.info("[5b/7] MEC link finished in %.1fs", time.monotonic() - t0)
 
     # ------------------------------------------------------------------
     # Step 6 – Cleanup
     # ------------------------------------------------------------------
-    logger.info("[6/6] Cleaning up temp files …")
+    logger.info("[6/7] Cleaning up temp files …")
     cleanup_files(
         raw_path,
         trimmed_path,
+        final_upload_path if final_upload_path != trimmed_path else None,
         canva_thumbnail_path if canva_thumbnail_path and canva_thumbnail_path.startswith(TEMP_DIR) else None,
+    )
+
+    log_pipeline_result(
+        topic=topic,
+        recording_date=start_dt,
+        duration_minutes=duration,
+        status="completed",
+        zoom_account=account_label_from_payload(payload),
+        youtube_url=wp_result.get("youtube_url", f"https://www.youtube.com/watch?v={video_id}"),
+        wp_url=wp_result.get("wp_post_url", ""),
+        mec_event_url=(mec_result or {}).get("event_url")
+        or ((mec_result or {}).get("match") or {}).get("url", ""),
+        recording_id=recording_id_from_payload(payload),
     )
 
     logger.info("Pipeline completed successfully for: %s", title)

@@ -4,7 +4,7 @@
 
 Python automation pipeline for Ganjier Guild Zoom replays: webhook → download → ffmpeg trim → YouTube upload → Canva thumbnail (optional) → WordPress replay post. All scripts live at the repo root (flat layout; docs sometimes reference a `zoom_pipeline/` subfolder that does not exist).
 
-**Operator instructions:** see [`WORKFLOW.md`](WORKFLOW.md) for the full runbook, including Canva thumbnail folder setup and per-meeting checklist.
+**Operator instructions:** see [`WORKFLOW.md`](WORKFLOW.md) for the full runbook. MEC standards: [`MEC_EVENT_STANDARD.md`](MEC_EVENT_STANDARD.md). Copy-paste series blocks: [`MEC_SERIES_TEMPLATES.md`](MEC_SERIES_TEMPLATES.md).
 
 ## Cursor Cloud specific instructions
 
@@ -38,10 +38,13 @@ pip install -r requirements.txt
 | Live webhook listener (port **5055**) | `python3 pipeline.py --webhook` |
 | Offline pipeline test | `python3 pipeline.py --file payload.json` |
 | Historical recording scan (preview) | `python3 backfill.py --dry-run` |
+| Yesterday-only test backfill | `python3 backfill.py --yesterday --dry-run` |
 | Historical recording scan (live) | `python3 backfill.py` |
 | Missed-webhook poller | `python3 poll_zoom.py` |
 | Canva folder / match test | `python3 canva_thumbnail.py --list-folder` / `--match "Topic"` |
+| Intro preview | `python3 replay_intro.py build --title "Topic" -o /tmp/intro.mp4` |
 | Zoom credential check | `python3 zoom_verify.py` |
+| Sheets tracker test | `python3 replay_tracker.py --test` |
 
 Start long-running services in **tmux** (e.g. session `pipeline-webhook`). The webhook binds `0.0.0.0:5055`; route `/zoom/webhook` accepts POST.
 
@@ -68,6 +71,8 @@ python3 -m unittest tests.test_pipeline_wiring
 - **YouTube** — Data API v3 (`client_secrets.json` + `token.json`, or `.env` JSON vars)
 - **WordPress** — `ganjierguild.com` REST API (`WP_USER` + `WP_APP_PASSWORD`)
 - **Canva** — OAuth thumbnails from `Replay Thumbnail Folder` (`canva_token.json`)
+- **WordPress tracker** — install `wordpress-plugin/ganjier-replay-pipeline/` (Tools → Replay Pipeline dashboard)
+- **Google Sheets** — optional mirror during migration (`REPLAY_TRACKER_BACKEND=both`)
 
 Verify WordPress auth without creating a post:
 
