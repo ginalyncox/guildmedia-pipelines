@@ -438,6 +438,60 @@ def get_authenticated_client(token_path: str = CANVA_TOKEN_PATH) -> str:
     return access_token
 
 
+def get_access_token_if_available(
+    token_path: str = CANVA_TOKEN_PATH,
+    *,
+    interactive: bool = False,
+) -> str | None:
+    """
+    Return a valid Canva access token without launching browser OAuth.
+
+    When ``interactive`` is False (default for pipeline folder resolution),
+    returns None if no token file exists or refresh fails.
+    """
+    global _cached_access_token
+
+    from oauth_files import ensure_canva_token_file
+
+    ensure_canva_token_file(Path(token_path))
+
+    if _cached_access_token:
+        return _cached_access_token
+
+    token_data: Optional[dict] = None
+
+    if os.path.exists(token_path):
+        try:
+            with open(token_path) as fh:
+                token_data = json.load(fh)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Could not read %s (%s)", token_path, exc)
+            token_data = None
+
+    if token_data:
+        try:
+            if _is_token_expired(token_data):
+                refresh_token = token_data.get("refresh_token")
+                if refresh_token:
+                    token_data = _refresh_access_token(refresh_token)
+                    _save_token(token_data, token_path)
+                else:
+                    token_data = None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Canva token refresh failed: %s", exc)
+            token_data = None
+
+    if not token_data:
+        if interactive:
+            return get_authenticated_client(token_path)
+        return None
+
+    access_token = token_data.get("access_token")
+    if access_token:
+        _cached_access_token = access_token
+    return access_token
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -445,6 +499,14 @@ def get_authenticated_client(token_path: str = CANVA_TOKEN_PATH) -> str:
 def _headers() -> dict[str, str]:
     """Return the Authorization header dict for every Canva API request."""
     token = get_authenticated_client()
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _headers_silent() -> dict[str, str] | None:
+    """Return auth headers only when a token is already available (no browser OAuth)."""
+    token = get_access_token_if_available(interactive=False)
+    if not token:
+        return None
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -680,7 +742,12 @@ def get_thumbnail(
         logger.warning("CANVA_CLIENT_ID is not set — skipping Canva thumbnail.")
         return None
 
-    folder_id = resolve_thumbnail_folder_id()
+    try:
+        folder_id = resolve_thumbnail_folder_id()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Canva folder resolution failed — skipping thumbnail: %s", exc)
+        return None
+
     if not folder_id:
         logger.warning(
             "No Canva thumbnail folder configured — skipping Canva thumbnail. "
@@ -735,8 +802,18 @@ def resolve_thumbnail_folder_id() -> str | None:
     folder_name = CANVA_THUMBNAIL_FOLDER_NAME.strip()
     configured_id = CANVA_THUMBNAIL_FOLDER_ID.strip()
 
+    if configured_id and not get_access_token_if_available(interactive=False):
+        logger.info(
+            "No Canva token yet — using CANVA_THUMBNAIL_FOLDER_ID without folder name lookup."
+        )
+        return configured_id
+
     if folder_name and CANVA_CLIENT_ID:
-        resolved_id = get_folder_id_by_name(folder_name)
+        try:
+            resolved_id = get_folder_id_by_name(folder_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Canva folder name lookup failed: %s", exc)
+            resolved_id = None
         if resolved_id:
             if configured_id and configured_id != resolved_id:
                 logger.warning(
@@ -782,13 +859,21 @@ def get_folder_id_by_name(folder_name: str) -> str | None:
         logger.error("CANVA_CLIENT_ID is not set.")
         return None
 
+    headers = _headers_silent()
+    if headers is None:
+        logger.warning(
+            "No Canva token available for folder name lookup. "
+            "Run: python canva_thumbnail.py --auth"
+        )
+        return None
+
     logger.info("Searching root folders for '%s' …", folder_name)
     url = f"{CANVA_BASE_URL}/folders/root/items"
     params: dict = {"item_types": "folder", "limit": 100}
     needle = folder_name.lower()
 
     while True:
-        resp = requests.get(url, headers=_headers(), params=params, timeout=30)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
         if resp.status_code != 200:
             logger.error(
                 "Canva API error listing root folders: HTTP %s — %s",
