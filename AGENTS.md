@@ -38,6 +38,7 @@ pip install -r requirements.txt
 | Live webhook listener (port **5055**) | `python3 pipeline.py --webhook` |
 | Offline pipeline test | `python3 pipeline.py --file payload.json` |
 | Historical recording scan (preview) | `python3 backfill.py --dry-run` |
+| Yesterday-only test backfill | `python3 backfill.py --yesterday --dry-run` |
 | Historical recording scan (live) | `python3 backfill.py` |
 | Missed-webhook poller | `python3 poll_zoom.py` |
 | Canva folder / match test | `python3 canva_thumbnail.py --list-folder` / `--match "Topic"` |

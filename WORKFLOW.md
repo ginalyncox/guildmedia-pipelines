@@ -107,6 +107,21 @@ python3 backfill.py --account jward --dry-run
 python3 backfill.py --account navigators --dry-run
 ```
 
+### Test with yesterday only (recommended first)
+
+```bash
+python3 backfill.py --yesterday --dry-run
+python3 backfill.py --yesterday
+```
+
+Or an explicit single day:
+
+```bash
+python3 backfill.py --from-date 2026-06-08 --to-date 2026-06-08 --dry-run
+```
+
+When that works, widen the window via `.env` (`BACKFILL_FROM_DATE`) or `--from-date`.
+
 ### Process missed recordings
 
 ```bash
