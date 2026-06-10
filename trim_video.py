@@ -31,11 +31,23 @@ Usage
 Or import and call trim_video() directly from another module.
 """
 
-import subprocess
-import re
-import sys
 import os
+import re
+import subprocess
+import sys
 from typing import Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TRIM_START_PHRASE = os.getenv("TRIM_START_PHRASE", "having a good session").strip()
+TRIM_USE_TRANSCRIPT = os.getenv("TRIM_USE_TRANSCRIPT", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -146,6 +158,136 @@ def _parse_silence_segments(ffmpeg_stderr: str, time_offset: float = 0.0):
     return segments
 
 
+def _vtt_timestamp_to_seconds(timestamp: str) -> float:
+    """Convert a VTT timestamp (HH:MM:SS.mmm) to seconds."""
+    hours, minutes, rest = timestamp.split(":")
+    seconds, millis = rest.split(".")
+    return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000.0
+
+
+def parse_vtt_transcript(transcript_path: str) -> list[tuple[float, str]]:
+    """
+    Parse a Zoom/WebVTT transcript into (start_sec, text) cues.
+
+    Returns cues sorted by start time.
+    """
+    with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+        content = fh.read()
+
+    cues: list[tuple[float, str]] = []
+    timestamp_re = re.compile(
+        r"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})"
+    )
+
+    for block in re.split(r"\n\s*\n", content.strip()):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        timestamp_line = next(
+            (line for line in lines if "-->" in line),
+            None,
+        )
+        if not timestamp_line:
+            continue
+
+        match = timestamp_re.search(timestamp_line)
+        if not match:
+            continue
+
+        start_sec = _vtt_timestamp_to_seconds(match.group(1))
+        text_lines = [
+            line
+            for line in lines
+            if line != timestamp_line and not line.isdigit() and not line.startswith("WEBVTT")
+        ]
+        text = " ".join(text_lines).strip()
+        if text:
+            cues.append((start_sec, text))
+
+    cues.sort(key=lambda cue: cue[0])
+    return cues
+
+
+def find_phrase_start_sec(
+    cues: list[tuple[float, str]],
+    phrase: str,
+) -> float | None:
+    """
+    Return the timestamp where ``phrase`` first appears in the transcript.
+
+    Matching is case-insensitive substring search on each cue and on short
+    multi-cue windows (handles phrases split across VTT lines).
+    """
+    needle = phrase.strip().lower()
+    if not needle or not cues:
+        return None
+
+    for start_sec, text in cues:
+        if needle in text.lower():
+            return start_sec
+
+    # Phrase may span adjacent cues (e.g. "having a" / "good session").
+    for idx in range(len(cues) - 1):
+        combined = f"{cues[idx][1]} {cues[idx + 1][1]}"
+        if needle in combined.lower():
+            return cues[idx][0]
+
+    return None
+
+
+def detect_start_from_transcript(
+    transcript_path: str,
+    phrase: str | None = None,
+) -> float | None:
+    """Locate trim start from a Zoom VTT using a spoken marker phrase."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return None
+
+    phrase = (phrase or TRIM_START_PHRASE).strip()
+    if not phrase:
+        return None
+
+    try:
+        cues = parse_vtt_transcript(transcript_path)
+    except OSError:
+        return None
+
+    return find_phrase_start_sec(cues, phrase)
+
+
+def detect_start_from_silence(
+    input_path: str,
+    total_duration: float,
+    *,
+    noise_db: float = -50.0,
+    silence_duration: float = 3.0,
+    scan_window: float = 600.0,
+) -> float:
+    """Detect trim start from pre-meeting silence (legacy behavior)."""
+    first_window = min(scan_window, total_duration)
+    print(f"\nScanning first {first_window:.0f}s for silence (finding meeting start)…")
+    stderr_start = _run_silencedetect(
+        input_path,
+        ss=0.0,
+        duration_limit=first_window,
+        noise_db=noise_db,
+        silence_duration=silence_duration,
+    )
+    start_segments = _parse_silence_segments(stderr_start, time_offset=0.0)
+
+    if start_segments:
+        last_silence = start_segments[-1]
+        start_sec = last_silence[1] if last_silence[1] is not None else last_silence[0]
+        print(f"  Found {len(start_segments)} silence segment(s) in first window.")
+        print(f"  Last silence: {last_silence[0]:.2f}s → {last_silence[1]:.2f}s")
+        print(f"  → Trim START set to: {start_sec:.2f}s")
+        return start_sec
+
+    print("  No silence found in first window → START defaults to 0.0s")
+    return 0.0
+
+
 # ── main logic ────────────────────────────────────────────────────────────────
 
 def trim_video(
@@ -154,9 +296,12 @@ def trim_video(
     noise_db: float = -50.0,
     silence_duration: float = 3.0,
     scan_window: float = 600.0,  # 10 minutes
+    transcript_path: str | None = None,
+    start_phrase: str | None = None,
+    use_transcript: bool | None = None,
 ) -> dict:
     """
-    Trim a Zoom recording by detecting silence at the beginning and end.
+    Trim a Zoom recording using transcript phrase detection and/or silence.
 
     Parameters
     ----------
@@ -165,6 +310,9 @@ def trim_video(
     noise_db         : silence threshold in dB (default -50)
     silence_duration : minimum silence length to detect in seconds (default 3)
     scan_window      : how many seconds to scan at each end (default 600 = 10 min)
+    transcript_path: optional Zoom VTT transcript for phrase-based trim start
+    start_phrase     : phrase marking session start (default TRIM_START_PHRASE env)
+    use_transcript   : try transcript trim first (default TRIM_USE_TRANSCRIPT env)
 
     Returns
     -------
@@ -173,6 +321,7 @@ def trim_video(
         end_sec      — detected (or default) trim end in seconds
         duration_sec — duration of the output clip
         output_path  — path to the written output file
+        start_method — "transcript" or "silence"
     """
     # ── validate inputs ───────────────────────────────────────────────────────
     _require_ffmpeg()
@@ -188,25 +337,37 @@ def trim_video(
     print(f"Input  : {input_path}")
     print(f"Total duration: {total_duration:.2f}s ({total_duration/60:.1f} min)")
 
-    # ── detect START (last silence in first scan_window) ──────────────────────
-    first_window = min(scan_window, total_duration)
-    print(f"\nScanning first {first_window:.0f}s for silence (finding meeting start)…")
-    stderr_start = _run_silencedetect(
-        input_path, ss=0.0, duration_limit=first_window,
-        noise_db=noise_db, silence_duration=silence_duration,
-    )
-    start_segments = _parse_silence_segments(stderr_start, time_offset=0.0)
+    phrase = (start_phrase if start_phrase is not None else TRIM_START_PHRASE).strip()
+    try_transcript = TRIM_USE_TRANSCRIPT if use_transcript is None else use_transcript
+    start_method = "silence"
+    start_sec: float
 
-    if start_segments:
-        # Use the END of the LAST silence segment as the trim start
-        last_silence = start_segments[-1]
-        start_sec: float = last_silence[1] if last_silence[1] is not None else last_silence[0]
-        print(f"  Found {len(start_segments)} silence segment(s) in first window.")
-        print(f"  Last silence: {last_silence[0]:.2f}s → {last_silence[1]:.2f}s")
-        print(f"  → Trim START set to: {start_sec:.2f}s")
+    if try_transcript and phrase and transcript_path:
+        print(f"\nSearching transcript for start phrase: {phrase!r}")
+        transcript_start = detect_start_from_transcript(transcript_path, phrase)
+        if transcript_start is not None:
+            start_sec = transcript_start
+            start_method = "transcript"
+            print(f"  → Trim START set from transcript: {start_sec:.2f}s")
+        else:
+            print("  Phrase not found in transcript — falling back to silence detection.")
+            start_sec = detect_start_from_silence(
+                input_path,
+                total_duration,
+                noise_db=noise_db,
+                silence_duration=silence_duration,
+                scan_window=scan_window,
+            )
     else:
-        start_sec = 0.0
-        print("  No silence found in first window → START defaults to 0.0s")
+        if try_transcript and phrase and not transcript_path:
+            print("\nNo transcript file available — using silence detection for trim start.")
+        start_sec = detect_start_from_silence(
+            input_path,
+            total_duration,
+            noise_db=noise_db,
+            silence_duration=silence_duration,
+            scan_window=scan_window,
+        )
 
     # ── detect END (first silence in last scan_window) ────────────────────────
     last_window_offset = max(0.0, total_duration - scan_window)
@@ -274,6 +435,7 @@ def trim_video(
         "end_sec": end_sec,
         "duration_sec": actual_duration,
         "output_path": output_path,
+        "start_method": start_method,
     }
 
 
