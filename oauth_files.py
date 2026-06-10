@@ -63,3 +63,17 @@ def youtube_files_ready() -> bool:
 def canva_token_ready() -> bool:
     ensure_canva_token_file()
     return (SCRIPT_DIR / "canva_token.json").exists()
+
+
+def ensure_service_account_file(path: Path | None = None) -> None:
+    """Create service_account.json from .env when absent (Google Sheets tracker)."""
+    path = path or (SCRIPT_DIR / "service_account.json")
+    _write_if_missing(path, os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", ""))
+
+
+def service_account_ready() -> bool:
+    ensure_service_account_file()
+    if (SCRIPT_DIR / "service_account.json").exists():
+        return True
+    file_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+    return bool(file_path and Path(file_path).exists())

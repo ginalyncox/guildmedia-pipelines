@@ -39,6 +39,11 @@ Last updated: 2026-05-13
 
 ---
 
+## Workflow instructions
+
+See [`WORKFLOW.md`](WORKFLOW.md) for the full operator runbook, including
+Canva thumbnail folder setup and the per-meeting checklist.
+
 ## First Run Order (once all 4 blockers are cleared)
 
 ```bash
@@ -64,15 +69,17 @@ python pipeline.py --webhook
 ## .env Quick Reference (fill in blanks locally)
 
 ```
-ZOOM_JWARD_ACCOUNT_ID=ozXPySCRQnW92mKd_AShsg
-ZOOM_JWARD_CLIENT_ID=lcOk4NTD2zQxltnJ4Rkw
-ZOOM_JWARD_CLIENT_SECRET=GhiFiNrvM8HBGpEDdUwzCDyWmDn2ZoqM
+# Copy from each account's Server-to-Server OAuth app in Zoom Marketplace:
+ZOOM_JWARD_ACCOUNT_ID=
+ZOOM_JWARD_CLIENT_ID=
+ZOOM_JWARD_CLIENT_SECRET=
 
-ZOOM_NAVIGATORS_ACCOUNT_ID=UHZIXq4nQ3az3UUaGbVS_g
-ZOOM_NAVIGATORS_CLIENT_ID=V61bHTVQTN6obqgfsHKvKQ
-ZOOM_NAVIGATORS_CLIENT_SECRET=OXWnDCASnmctIEURI5aTWySl2LNvssm5
+ZOOM_NAVIGATORS_ACCOUNT_ID=
+ZOOM_NAVIGATORS_CLIENT_ID=
+ZOOM_NAVIGATORS_CLIENT_SECRET=
 
-ZOOM_WEBHOOK_SECRET_TOKEN=          ← still needed
+ZOOM_JWARD_WEBHOOK_SECRET=
+ZOOM_NAVIGATORS_WEBHOOK_SECRET=
 
 YOUTUBE_PLAYLIST_NAME=Replays
 YOUTUBE_CHANNEL_ID=UCsaeMxhYi2cpqvzfOBWTDaQ

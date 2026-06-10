@@ -40,10 +40,14 @@ SCRIPTS = [
     "backfill.py",
     "poll_zoom.py",
     "zoom_auth.py",
+    "zoom_verify.py",
     "canva_thumbnail.py",
     "upload_youtube.py",
     "trim_video.py",
     "post_to_replay_library.py",
+    "replay_tracker.py",
+    "replay_intro.py",
+    "mec_events.py",
 ]
 
 SERVICES = [
@@ -148,15 +152,56 @@ files = {
 for fname, (present, fix) in files.items():
     check(fname, present, fix)
 
+# --- 4b. Replay tracker (WordPress plugin / optional Sheets) ---
+print(f"\n[4b/7] Replay tracker...")
+try:
+    from oauth_files import ensure_service_account_file, service_account_ready
+    from replay_tracker import (
+        sheets_is_configured,
+        tracker_backend,
+        wp_is_configured,
+    )
+
+    ensure_service_account_file()
+    backend = tracker_backend()
+    ok(f"Tracker backend mode: {backend}")
+    if backend in {"wordpress", "both"}:
+        if wp_is_configured():
+            ok("WordPress tracker credentials present (install ganjier-replay-pipeline plugin)")
+        else:
+            warn("WordPress tracker credentials missing")
+    if backend in {"sheets", "both"}:
+        if sheets_is_configured():
+            ok("Google Sheets tracker configured")
+        else:
+            warn(
+                "Sheets mirror not configured — set GOOGLE_SHEETS_SPREADSHEET_ID and "
+                "GOOGLE_SERVICE_ACCOUNT_JSON if needed"
+            )
+except ImportError as exc:
+    warn(f"replay_tracker import failed ({exc})")
+
 # --- 5. Zoom OAuth per account ---
 print(f"\n[5/7] Zoom OAuth...")
 try:
-    from zoom_auth import configured_accounts, verify_auth
-    for auth in configured_accounts():
-        if verify_auth(auth):
-            ok(f"Zoom OAuth [{auth.name}]")
+    from zoom_auth import ACCOUNT_ENV_PREFIXES, _build_account_auth, auth_status
+    for name in ACCOUNT_ENV_PREFIXES:
+        auth = _build_account_auth(name, ACCOUNT_ENV_PREFIXES[name])
+        if auth is None:
+            miss(f"Zoom [{name}]  →  set {ACCOUNT_ENV_PREFIXES[name]}_* in .env")
+            errors += 1
+            continue
+        ok_auth, message = auth_status(auth)
+        if ok_auth:
+            ok(f"Zoom OAuth [{name}]")
         else:
-            fail(f"Zoom OAuth [{auth.name}]  →  check ZOOM_{auth.name.upper()}_* in .env")
+            fail(f"Zoom OAuth [{name}]  →  {message}")
+            if "invalid client" in message.lower() or "invalid_client" in message.lower():
+                fail(
+                    f"Zoom [{name}] credentials rejected by Zoom — copy fresh values "
+                    f"from the {name} Server-to-Server OAuth app in the Zoom Marketplace "
+                    f"into {ACCOUNT_ENV_PREFIXES[name]}_* in your GitHub .env"
+                )
             errors += 1
 except ImportError as exc:
     warn(f"zoom_auth import failed ({exc})")

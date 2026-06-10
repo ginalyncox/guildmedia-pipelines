@@ -14,7 +14,8 @@ SETUP (OAuth 2.0 — Canva Connect API)
 
        CANVA_CLIENT_ID=OC-AZ4jhERgHtNN
        CANVA_CLIENT_SECRET=your_canva_client_secret_here
-       CANVA_THUMBNAIL_FOLDER_ID=your_folder_id_here
+       CANVA_THUMBNAIL_FOLDER_NAME=Replay Thumbnail Folder
+       # CANVA_THUMBNAIL_FOLDER_ID=your_folder_id_here   # optional fallback
 
 5. Run the one-time auth flow (opens browser, approve access, token saved):
        python canva_thumbnail.py --auth
@@ -72,6 +73,9 @@ load_dotenv()
 CANVA_CLIENT_ID: str = os.getenv("CANVA_CLIENT_ID", "")
 CANVA_CLIENT_SECRET: str = os.getenv("CANVA_CLIENT_SECRET", "")
 CANVA_THUMBNAIL_FOLDER_ID: str = os.getenv("CANVA_THUMBNAIL_FOLDER_ID", "")
+CANVA_THUMBNAIL_FOLDER_NAME: str = os.getenv(
+    "CANVA_THUMBNAIL_FOLDER_NAME", "Replay Thumbnail Folder"
+)
 CANVA_BASE_URL: str = "https://api.canva.com/rest/v1"
 
 # OAuth 2.0 endpoints
@@ -676,10 +680,12 @@ def get_thumbnail(
         logger.warning("CANVA_CLIENT_ID is not set — skipping Canva thumbnail.")
         return None
 
-    if not CANVA_THUMBNAIL_FOLDER_ID:
+    folder_id = resolve_thumbnail_folder_id()
+    if not folder_id:
         logger.warning(
-            "CANVA_THUMBNAIL_FOLDER_ID is not set — skipping Canva thumbnail. "
-            "Run: python canva_thumbnail.py --list-folders"
+            "No Canva thumbnail folder configured — skipping Canva thumbnail. "
+            "Set CANVA_THUMBNAIL_FOLDER_NAME (default: Replay Thumbnail Folder) "
+            "or CANVA_THUMBNAIL_FOLDER_ID. Run: python canva_thumbnail.py --list-folders"
         )
         return None
 
@@ -692,7 +698,7 @@ def get_thumbnail(
 
     try:
         # Step 1 — list folder
-        items = _list_folder_items(CANVA_THUMBNAIL_FOLDER_ID)
+        items = _list_folder_items(folder_id)
 
         # Step 2 — match design
         design = _match_design(items, meeting_title)
@@ -716,6 +722,41 @@ def get_thumbnail(
     except Exception as exc:  # noqa: BLE001
         logger.error("Canva thumbnail failed: %s", exc, exc_info=True)
         return None
+
+
+def resolve_thumbnail_folder_id() -> str | None:
+    """
+    Resolve the Canva folder ID for replay thumbnail templates.
+
+    Prefers a folder name lookup (default: "Replay Thumbnail Folder") so the
+    pipeline stays linked to the correct Canva folder even if the ID changes.
+    Falls back to CANVA_THUMBNAIL_FOLDER_ID when name lookup is unavailable.
+    """
+    folder_name = CANVA_THUMBNAIL_FOLDER_NAME.strip()
+    configured_id = CANVA_THUMBNAIL_FOLDER_ID.strip()
+
+    if folder_name and CANVA_CLIENT_ID:
+        resolved_id = get_folder_id_by_name(folder_name)
+        if resolved_id:
+            if configured_id and configured_id != resolved_id:
+                logger.warning(
+                    "CANVA_THUMBNAIL_FOLDER_ID (%s) does not match folder '%s' (%s); "
+                    "using the folder resolved by name.",
+                    configured_id,
+                    folder_name,
+                    resolved_id,
+                )
+            return resolved_id
+        if configured_id:
+            logger.warning(
+                "Canva folder '%s' not found; falling back to CANVA_THUMBNAIL_FOLDER_ID.",
+                folder_name,
+            )
+            return configured_id
+        logger.warning("Canva folder '%s' not found and no folder ID configured.", folder_name)
+        return None
+
+    return configured_id or None
 
 
 def get_folder_id_by_name(folder_name: str) -> str | None:
@@ -837,26 +878,31 @@ def _cmd_list_folders() -> None:
     for f in sorted(folders, key=lambda x: x.get("name", "").lower()):
         print(f"{f['id']:<30}  {f['name']}")
     print(
-        "\nAdd the folder ID for your thumbnail templates to .env as:\n"
-        "  CANVA_THUMBNAIL_FOLDER_ID=<id>"
+        "\nSet the replay thumbnail folder in .env as either:\n"
+        f"  CANVA_THUMBNAIL_FOLDER_NAME={CANVA_THUMBNAIL_FOLDER_NAME!r}\n"
+        "  CANVA_THUMBNAIL_FOLDER_ID=<id>   (optional fallback)"
     )
 
 
 def _cmd_list_folder() -> None:
-    """Print all designs in CANVA_THUMBNAIL_FOLDER_ID."""
+    """Print all designs in the configured replay thumbnail folder."""
     if not CANVA_CLIENT_ID:
         print("ERROR: CANVA_CLIENT_ID is not set in .env", file=sys.stderr)
         sys.exit(1)
-    if not CANVA_THUMBNAIL_FOLDER_ID:
+
+    folder_id = resolve_thumbnail_folder_id()
+    if not folder_id:
         print(
-            "ERROR: CANVA_THUMBNAIL_FOLDER_ID is not set in .env. "
-            "Run --list-folders first.",
+            "ERROR: Could not resolve thumbnail folder. "
+            f"Set CANVA_THUMBNAIL_FOLDER_NAME (default: {CANVA_THUMBNAIL_FOLDER_NAME!r}) "
+            "or CANVA_THUMBNAIL_FOLDER_ID, then run --list-folders.",
             file=sys.stderr,
         )
         sys.exit(1)
 
+    print(f"Using folder ID: {folder_id}")
     try:
-        items = _list_folder_items(CANVA_THUMBNAIL_FOLDER_ID)
+        items = _list_folder_items(folder_id)
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -878,15 +924,20 @@ def _cmd_match(meeting_title: str) -> None:
     if not CANVA_CLIENT_ID:
         print("ERROR: CANVA_CLIENT_ID is not set in .env", file=sys.stderr)
         sys.exit(1)
-    if not CANVA_THUMBNAIL_FOLDER_ID:
+
+    folder_id = resolve_thumbnail_folder_id()
+    if not folder_id:
         print(
-            "ERROR: CANVA_THUMBNAIL_FOLDER_ID is not set in .env.",
+            "ERROR: Could not resolve thumbnail folder. "
+            f"Set CANVA_THUMBNAIL_FOLDER_NAME (default: {CANVA_THUMBNAIL_FOLDER_NAME!r}) "
+            "or CANVA_THUMBNAIL_FOLDER_ID.",
             file=sys.stderr,
         )
         sys.exit(1)
 
+    print(f"Using folder ID: {folder_id}")
     try:
-        items = _list_folder_items(CANVA_THUMBNAIL_FOLDER_ID)
+        items = _list_folder_items(folder_id)
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
