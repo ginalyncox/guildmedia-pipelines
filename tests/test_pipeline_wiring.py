@@ -44,6 +44,8 @@ class PipelineWiringTests(unittest.TestCase):
     )
     @patch("pipeline.run_canva_thumbnail", return_value=None)
     @patch("pipeline.run_youtube_upload", return_value="abc123")
+    @patch("pipeline.run_mec_link", return_value=None)
+    @patch("pipeline.run_intro", return_value="/tmp/zoom_pipeline/test_trimmed.mp4")
     @patch("pipeline.run_trim", return_value="/tmp/zoom_pipeline/test_trimmed.mp4")
     @patch("pipeline.download_recording", return_value="/tmp/zoom_pipeline/test.mp4")
     @patch("pipeline.os.path.getsize", return_value=1024 * 1024)
@@ -54,6 +56,8 @@ class PipelineWiringTests(unittest.TestCase):
         _size,
         mock_download,
         mock_trim,
+        mock_intro,
+        _mec,
         mock_upload,
         _canva,
         mock_wp,
@@ -68,6 +72,7 @@ class PipelineWiringTests(unittest.TestCase):
             account_id="acct-123",
         )
         mock_trim.assert_called_once()
+        mock_intro.assert_called_once()
         mock_upload.assert_called_once()
         mock_wp.assert_called_once()
         mock_tracker.assert_called_once()
