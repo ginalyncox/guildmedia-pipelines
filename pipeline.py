@@ -158,7 +158,24 @@ def download_recording(download_url: str, dest_path: str, account_id: str | None
 # Step 2 – Trim
 # ---------------------------------------------------------------------------
 
-def run_trim(input_path: str, output_path: str) -> str:
+def find_transcript_file(recording_files: list[dict]) -> dict | None:
+    """Return the best completed transcript file from a Zoom recording payload."""
+    for file_type in ("TRANSCRIPT", "CC"):
+        for rec_file in recording_files:
+            if (
+                rec_file.get("file_type", "").upper() == file_type
+                and rec_file.get("status", "").lower() == "completed"
+                and rec_file.get("download_url")
+            ):
+                return rec_file
+    return None
+
+
+def run_trim(
+    input_path: str,
+    output_path: str,
+    transcript_path: str | None = None,
+) -> str:
     """
     Call trim_recording() from trim_video.py.
 
@@ -168,6 +185,8 @@ def run_trim(input_path: str, output_path: str) -> str:
         Path to the raw downloaded MP4.
     output_path : str
         Desired path for the trimmed MP4.
+    transcript_path : str or None
+        Optional Zoom VTT transcript for phrase-based trim start.
 
     Returns
     -------
@@ -185,7 +204,7 @@ def run_trim(input_path: str, output_path: str) -> str:
             "Make sure trim_video.py is in the same directory."
         ) from exc
 
-    result = trim_video(input_path, output_path)
+    result = trim_video(input_path, output_path, transcript_path=transcript_path)
     trimmed_path = result["output_path"] if isinstance(result, dict) else output_path
 
     if not os.path.exists(trimmed_path):
@@ -194,7 +213,13 @@ def run_trim(input_path: str, output_path: str) -> str:
         )
 
     size_mb = os.path.getsize(trimmed_path) / (1024 * 1024)
-    logger.info("Trim complete (%.1f MB): %s", size_mb, trimmed_path)
+    start_method = result.get("start_method", "silence") if isinstance(result, dict) else "silence"
+    logger.info(
+        "Trim complete (%.1f MB, start=%s): %s",
+        size_mb,
+        start_method,
+        trimmed_path,
+    )
     return trimmed_path
 
 
@@ -522,6 +547,8 @@ def run_pipeline(payload: dict) -> None:
     os.makedirs(TEMP_DIR, exist_ok=True)
     raw_path      = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}.mp4")
     trimmed_path  = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_trimmed.mp4")
+    transcript_path: str | None = None
+    transcript_file = find_transcript_file(rec_files)
     upload_path   = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}_upload.mp4")
 
     title       = build_title(topic, start_dt)
@@ -548,13 +575,31 @@ def run_pipeline(payload: dict) -> None:
         sys.exit(1)
     logger.info("[1/7] Download finished in %.1fs", time.monotonic() - t0)
 
+    if transcript_file:
+        transcript_path = os.path.join(TEMP_DIR, f"zoom_{date_tag}_{clean_topic}.vtt")
+        try:
+            download_recording(
+                transcript_file["download_url"],
+                transcript_path,
+                account_id=account_id,
+            )
+            logger.info("[1/7] Transcript downloaded for phrase-based trim: %s", transcript_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[1/7] Transcript download failed — trim will fall back to silence detection: %s",
+                exc,
+            )
+            transcript_path = None
+    else:
+        logger.info("[1/7] No transcript file in recording payload — silence-based trim start.")
+
     # ------------------------------------------------------------------
     # Step 2 – Trim
     # ------------------------------------------------------------------
     logger.info("[2/7] Trimming video …")
     t0 = time.monotonic()
     try:
-        run_trim(raw_path, trimmed_path)
+        run_trim(raw_path, trimmed_path, transcript_path=transcript_path)
     except Exception as exc:
         logger.error("[2/7] Trim failed: %s", exc, exc_info=True)
         _log_tracker_failure(payload, topic, start_dt, duration, "trim", exc)
